@@ -66,6 +66,29 @@ export const myScenarios: ScenarioDef[] = [{
 * Fiber: never look into the end, inspect → clean → inspect, polarity A→B.
 * RJ45: a split pair passes continuity but fails the wiremap test.
 
+## v0.2: physical work, aisles, walking, coaching
+
+* **Fasteners** (`engine/catalog.ts` → `FASTENERS`, state in `Device.fasteners`, helpers in `engine/fasteners.ts`).
+  Every part and cover is held by something the trainee works by hand: the PSU cord bail and the green release tab,
+  the fan finger latch, the lid lock screw and cam latch, riser thumbscrews, the GPU bracket screw, the M.2 screw, the CMOS clip,
+  the CPU load-frame lever, the four heatsink screws (loosen 4→1, torque 1→4), and the rack-ear latches. The `fastener`
+  action toggles one; `removePart`/`layer` refuse while anything gating removal is still engaged; freshly inserted parts
+  come back with spring catches engaged and screws loose, and the repair steps require them secured again.
+  A heatsink that isn't torqued down thermally trips on power-on.
+* **Aisles** (`Trainee.side`). The front of the rack (cold aisle: bays, power button, rack ears, everything inside once
+  slid out) and the back (hot aisle: PSUs, cords, NIC, cables, PDUs) are different places. `walk` with a `side` goes
+  round the end of the row (costs time). Rear work is refused while the server is slid out to the service position,
+  because its back end is then buried mid-rack behind the cable-management arm.
+* **Walking** (`app/scenes/RackScene.tsx` → `WalkController`, state in `scenes/three/walker.ts`). WASD/arrows, drag to
+  look, Shift to run, V to toggle. Reaching a rack face dispatches `arrive` (no time cost: real time already passed).
+  The row is solid, and opposite rows bound the aisles. In inspect mode an avatar marks where you stand.
+* **Coach** (`engine/coach.ts`, `Step.coach`). Repair steps expose a live checklist of micro-actions ("flip the bail",
+  "loosen screw 4") with a 3D target. Learn mode always shows it, with a gold beacon over the server and a glow on the exact
+  latch or screw. Practice mode reveals it per objective with "💡 Show me how" (counts as a hint). Every non-challenge run also
+  has a "📖 playbook" (the scenario's expert path).
+* **Menus** use a bright theme (`body[data-theme='bright']`) with XP, levels, ranks, a streak, badges and stars
+  (`app/progress.ts` → `rankOf`, `badgesOf`, `starsFor`). The play screen keeps the dark HUD over a bright data hall.
+
 ## Known limitations / next steps
 
 * Vendor-specific BMC skins (iDRAC/iLO-style) are not built yet (planned per doc 07).

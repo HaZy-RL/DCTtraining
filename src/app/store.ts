@@ -12,6 +12,7 @@ import { advance, nextPendingAt } from '../engine/sim';
 import type { PortRef, World } from '../engine/types';
 import { loadProgress, recordAttempt, saveProgress, type ProgressData, type Settings } from './progress';
 import { sfx } from './audio';
+import { resetWalker } from './scenes/three/walker';
 
 setAutoFreeze(false);
 
@@ -55,6 +56,10 @@ interface State {
   cableDraft: { a: PortRef; b: PortRef } | null;
   hintsUsed: number;
   shell: ShellSession | null;
+  /** 3D camera: orbit/inspect around the selection, or first-person walking. */
+  camMode: 'inspect' | 'walk';
+  /** Practice mode: steps whose coach checklist the trainee asked to see (costs a hint). */
+  coachRevealed: Record<string, true>;
 
   go: (s: Screen) => void;
   start: (defId: string, mode: Mode, seed?: number) => void;
@@ -66,6 +71,10 @@ interface State {
   setPanel: (p: Panel | null) => void;
   toggleTerminal: (open?: boolean) => void;
   setView: (v: 'front' | 'rear') => void;
+  /** Look at the other side of the rack; if you're standing at a rack, walk round to that aisle. */
+  goAisle: (v: 'front' | 'rear') => void;
+  setCamMode: (m: 'inspect' | 'walk') => void;
+  revealCoach: (stepId: string) => void;
   select: (s: Selection) => void;
   setPendingPort: (p: PortRef | null) => void;
   setPaused: (p: boolean) => void;
@@ -95,6 +104,8 @@ export const useStore = create<State>((set, get) => ({
   cableDraft: null,
   hintsUsed: 0,
   shell: null,
+  camMode: 'inspect',
+  coachRevealed: {},
 
   go: (screen) => {
     set({ screen });
@@ -111,6 +122,7 @@ export const useStore = create<State>((set, get) => ({
     const s = seed ?? randomSeed();
     const inst = def.build(s, mode);
     inst.world.trainee.name = 'You';
+    resetWalker();
     const api = {
       getWorld: () => get().world!,
       dispatch: (a: Action) => get().dispatch(a),
@@ -133,6 +145,8 @@ export const useStore = create<State>((set, get) => ({
       cableDraft: null,
       hintsUsed: 0,
       shell,
+      camMode: 'inspect',
+      coachRevealed: {},
       screen: { name: 'play' },
     });
     if (inst.startTool === 'terminal') set({ panel: null });
@@ -146,6 +160,8 @@ export const useStore = create<State>((set, get) => ({
       res = applyAction(d, a);
     });
     set({ world: next });
+    // The camera follows you round the rack: standing in the hot aisle means looking at the rear.
+    if (next.racks[next.trainee.location ?? ''] && (next.trainee.side !== w.trainee.side || next.trainee.location !== w.trainee.location)) set({ view: next.trainee.side });
     if (a.type !== 'setFlag' && a.type !== 'notes' && get().progress.settings.sound) {
       if (!res.ok) sfx('error');
       else if (next.penalties.length > w.penalties.length) sfx('warn');
@@ -199,6 +215,16 @@ export const useStore = create<State>((set, get) => ({
   setPanel: (panel) => set({ panel }),
   toggleTerminal: (open) => set({ terminalOpen: open ?? !get().terminalOpen }),
   setView: (view) => set({ view }),
+  goAisle: (side) => {
+    const w = get().world;
+    set({ view: side });
+    if (w && w.racks[w.trainee.location ?? ''] && w.trainee.side !== side) get().dispatch({ type: 'walk', to: w.trainee.location!, side });
+  },
+  setCamMode: (camMode) => set({ camMode }),
+  revealCoach: (stepId) => {
+    if (get().coachRevealed[stepId]) return;
+    set({ coachRevealed: { ...get().coachRevealed, [stepId]: true }, hintsUsed: get().hintsUsed + 1 });
+  },
   select: (sel) => set({ sel }),
   setPendingPort: (pendingPort) => set({ pendingPort }),
   setPaused: (paused) => set({ paused }),

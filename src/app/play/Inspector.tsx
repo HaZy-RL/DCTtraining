@@ -1,6 +1,7 @@
 // Contextual action card for whatever is selected in the 3D rack scene.
 import { useState } from 'react';
-import { KIND_LABEL, MODELS, partSpec } from '../../engine/catalog';
+import { fastenersOf, KIND_ANATOMY, KIND_LABEL, MODELS, partSpec, type FastenerDef } from '../../engine/catalog';
+import { isTight } from '../../engine/fasteners';
 import { cableAt, hasAC, healthLed, linkState, locationOf, parseOutlet, pduLoadW, psuInput, slotLed } from '../../engine/projectors';
 import type { Cable, CableType, Component, Device, PortRef, World } from '../../engine/types';
 import { useStore } from '../store';
@@ -17,13 +18,51 @@ function hostPort(w: World, p: PortRef | null) {
   return `${w.devices[p.deviceId]?.hostname ?? '?'} : ${p.port}`;
 }
 
+const F_ICON: Record<FastenerDef['kind'], string> = { screw: '🔩', thumbscrew: '🪛', clip: '📎', latch: '🔒', lever: '↕️', tab: '🟩' };
+
+/** Every screw / clip / latch on a part or cover, with its state and a button to work it. */
+export function FastenerList({ dev, target, title }: { dev: Device; target: string; title?: string }) {
+  const dispatch = useStore((s) => s.dispatch);
+  const defs = fastenersOf(dev.model, target);
+  if (!defs.length) return null;
+  return (
+    <div className="fasteners">
+      <b style={{ fontSize: 12 }}>{title ?? 'Held in by'}</b>
+      {defs.map((f) => {
+        const tight = isTight(dev, target, f.id);
+        return (
+          <div key={f.id} className={`fastener ${tight ? 'tight' : 'loose'}`}>
+            <span className="fi">{F_ICON[f.kind]}</span>
+            <span className="grow">
+              {f.label}
+              {f.tool && <span className="dim"> · {f.tool}</span>}
+              {f.spring && <span className="dim"> · spring</span>}
+            </span>
+            <span className={tight ? 'pill-ok' : 'pill-warn'}>{tight ? (f.kind === 'tab' || f.kind === 'clip' || f.kind === 'latch' ? 'engaged' : 'tight') : 'released'}</span>
+            <button className="btn sm" title={tight ? f.release : f.secure} onClick={() => dispatch({ type: 'fastener', deviceId: dev.id, target, id: f.id, secure: !tight })}>
+              {tight ? 'Release' : 'Secure'}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function LocationBar() {
   const w = useStore((s) => s.world!);
   const dispatch = useStore((s) => s.dispatch);
+  const goAisle = useStore((s) => s.goAisle);
   const loc = w.trainee.location;
+  const atRack = !!loc && !!w.racks[loc];
   return (
     <div className="row wrap" style={{ fontSize: 12, marginBottom: 6 }}>
-      <span className="muted">📍 {loc === 'noc' ? 'DCO desk' : loc === 'cage' ? 'Parts cage' : loc ? w.racks[loc]?.location ?? loc : '—'}</span>
+      <span className="muted">📍 {loc === 'noc' ? 'DCO desk' : loc === 'cage' ? 'Parts cage' : loc === 'aisle' ? 'Walking the hall' : loc ? w.racks[loc]?.location ?? loc : '—'}</span>
+      {atRack && (
+        <button className="btn sm" title="Walk round the end of the row" onClick={() => goAisle(w.trainee.side === 'front' ? 'rear' : 'front')}>
+          {w.trainee.side === 'front' ? '❄ cold aisle → go to hot aisle' : '🔥 hot aisle → go to cold aisle'}
+        </button>
+      )}
       <span className={w.trainee.esdStrap ? 'pill-ok' : 'dim'}>{w.trainee.esdStrap ? '⚡ ESD on' : '⚡ no ESD'}</span>
       <div className="spacer" />
       <button className={`btn sm ${w.trainee.esdStrap ? 'on' : ''}`} onClick={() => dispatch({ type: 'esd', on: !w.trainee.esdStrap })}>
@@ -36,9 +75,10 @@ function LocationBar() {
 function WalkButton({ rackId }: { rackId: string }) {
   const w = useStore((s) => s.world!);
   const dispatch = useStore((s) => s.dispatch);
+  const view = useStore((s) => s.view);
   if (w.trainee.location === rackId) return null;
   return (
-    <button className="btn primary sm" onClick={() => dispatch({ type: 'walk', to: rackId })}>
+    <button className="btn primary sm" onClick={() => dispatch({ type: 'walk', to: rackId, side: view })}>
       🚶 Walk to {w.racks[rackId]?.location ?? rackId}
     </button>
   );
@@ -226,6 +266,11 @@ function CordRow({ dev, psu }: { dev: Device; psu: string }) {
             → PDU-{parseOutlet(cord)?.side}:{parseOutlet(cord)?.n}
           </span>
           {inp && !inp.ok && <span className="pill-warn">({inp.reason})</span>}
+          {dev.slots[psu] && (
+            <button className={`btn sm ${isTight(dev, psu, 'bail') ? '' : 'warn'}`} title="Wire retention bail over the plug" onClick={() => dispatch({ type: 'fastener', deviceId: dev.id, target: psu, id: 'bail', secure: !isTight(dev, psu, 'bail') })}>
+              📎 {isTight(dev, psu, 'bail') ? 'Bail on · flip off' : 'Bail OFF · snap on'}
+            </button>
+          )}
           <button className="btn sm" onClick={() => dispatch({ type: 'reseatCord', deviceId: dev.id, psu })}>
             Reseat
           </button>
@@ -257,9 +302,10 @@ function DeviceCard({ dev, buildMode }: { dev: Device; buildMode?: boolean }) {
   const w = useStore((s) => s.world!);
   const dispatch = useStore((s) => s.dispatch);
   const select = useStore((s) => s.select);
-  const setView = useStore((s) => s.setView);
+  const goAisle = useStore((s) => s.goAisle);
   const m = MODELS[dev.model];
   const here = !dev.rackId || w.trainee.location === dev.rackId;
+  const front = !dev.rackId || w.trainee.side === 'front';
   if (dev.role !== 'server') {
     return (
       <div>
@@ -322,32 +368,42 @@ function DeviceCard({ dev, buildMode }: { dev: Device; buildMode?: boolean }) {
               </button>
             )}
           </div>
+          {dev.rackId && !dev.servicePosition && front && <FastenerList dev={dev} target="chassis" title="Rack-ear latches (front, both sides)" />}
           {(dev.servicePosition || !dev.rackId) && (
-            <div className="actions">
-              <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'lid', install: !dev.layers.lid })}>
-                {dev.layers.lid ? 'Remove lid' : 'Install lid'}
-              </button>
-              {!dev.layers.lid && (
-                <>
-                  <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'shroud', install: !dev.layers.shroud })}>
-                    {dev.layers.shroud ? 'Remove air shroud' : 'Install air shroud'}
-                  </button>
-                  <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'riser1', install: !dev.layers.riser1 })}>
-                    {dev.layers.riser1 ? 'Remove Riser 1' : 'Install Riser 1'}
-                  </button>
-                  <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'riser2', install: !dev.layers.riser2 })}>
-                    {dev.layers.riser2 ? 'Remove Riser 2' : 'Install Riser 2'}
-                  </button>
-                </>
+            <>
+              {dev.layers.lid && <FastenerList dev={dev} target="lid" title="Top cover" />}
+              <div className="actions">
+                <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'lid', install: !dev.layers.lid })}>
+                  {dev.layers.lid ? 'Slide back & lift off the lid' : 'Fit the lid'}
+                </button>
+                {!dev.layers.lid && (
+                  <>
+                    <button className="btn sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer: 'shroud', install: !dev.layers.shroud })}>
+                      {dev.layers.shroud ? 'Lift out air shroud' : 'Drop in air shroud'}
+                    </button>
+                    {(['riser1', 'riser2'] as const).map((r) => (
+                      <button key={r} className="btn sm" onClick={() => select({ deviceId: dev.id, slot: `layer:${r}`, rackId: dev.rackId ?? undefined })}>
+                        {r.replace('riser', 'Riser ')} {dev.layers[r] ? '(installed)…' : '(OUT)…'}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+          {dev.rackId && (
+            <div style={{ marginTop: 8 }}>
+              <b style={{ fontSize: 12 }}>Power cords (rear · hot aisle)</b>
+              {w.trainee.side === 'rear' && !dev.servicePosition ? (
+                ['PSU1', 'PSU2'].map((p) => <CordRow key={p} dev={dev} psu={p} />)
+              ) : (
+                <div className="dim" style={{ fontSize: 12 }}>
+                  {dev.servicePosition ? 'Out of reach while the server is slid out.' : 'Out of reach from the cold aisle. Walk round to the hot aisle to work on the cords.'}{' '}
+                  {['PSU1', 'PSU2'].map((p) => `${p}: ${dev.powerCords[p] ? `PDU-${parseOutlet(dev.powerCords[p]!)?.side}` : 'unplugged'}`).join(' · ')}
+                </div>
               )}
             </div>
           )}
-          <div style={{ marginTop: 8 }}>
-            <b style={{ fontSize: 12 }}>Power cords (rear)</b>
-            {['PSU1', 'PSU2'].map((p) => (
-              <CordRow key={p} dev={dev} psu={p} />
-            ))}
-          </div>
           {(buildMode || dev.drained) && dev.rackId && (
             <div className="actions">
               <button className="btn sm danger" onClick={() => dispatch({ type: 'unmountDevice', deviceId: dev.id })}>
@@ -368,8 +424,8 @@ function DeviceCard({ dev, buildMode }: { dev: Device; buildMode?: boolean }) {
             const s = e.target.value;
             if (!s) return;
             const def = m.slots.find((x) => x.id === s);
-            if (def?.access === 'rear') setView('rear');
-            if (def?.access === 'front') setView('front');
+            if (def?.access === 'rear') goAisle('rear');
+            else goAisle('front');
             select({ deviceId: dev.id, slot: s, rackId: dev.rackId ?? undefined });
           }}
         >
@@ -390,42 +446,48 @@ function DeviceCard({ dev, buildMode }: { dev: Device; buildMode?: boolean }) {
 
 // ---------- slot ----------
 
-const HEATSINK_ORDER_HINT = 'Click the screws in order, then confirm.';
-
 function HeatsinkWidget({ dev, cpu }: { dev: Device; cpu: string }) {
   const dispatch = useStore((s) => s.dispatch);
   const installed = dev.heatsinks[cpu];
-  const [order, setOrder] = useState<number[]>([]);
+  const target = `heatsink:${cpu}`;
+  const allLoose = [1, 2, 3, 4].every((n) => !isTight(dev, target, `s${n}`));
+  const seq = dev.torque[`${target}:loosen`]?.length ? dev.torque[`${target}:loosen`] : dev.torque[`${target}:tighten`] ?? [];
   return (
     <div>
       <h4>🧊 Heatsink on {cpu}</h4>
-      <p style={{ fontSize: 12.5, margin: '4px 0' }}>
-        {installed ? 'Loosen the 4 captive Torx screws in sequence.' : 'Seat the heatsink and tighten the screws in sequence.'} {HEATSINK_ORDER_HINT}
-      </p>
-      <div className="row">
-        {[1, 2, 3, 4].map((n) => (
-          <button key={n} className={`btn ${order.includes(n) ? 'on' : ''}`} disabled={order.includes(n)} onClick={() => setOrder([...order, n])}>
-            {n}
-          </button>
-        ))}
-        <span className="mono dim">{order.join(' → ')}</span>
-      </div>
-      <div className="actions">
-        <button
-          className="btn primary sm"
-          disabled={order.length < 4}
-          onClick={() => {
-            dispatch({ type: 'heatsink', deviceId: dev.id, cpu, install: !installed, order });
-            setOrder([]);
-          }}
-        >
-          {installed ? 'Loosen & lift heatsink' : 'Seat & torque heatsink'}
-        </button>
-        <button className="btn sm" onClick={() => setOrder([])}>
-          Reset
-        </button>
-      </div>
-      {!installed && <p className="dim" style={{ fontSize: 12 }}>Tip: clean the old paste with IPA and apply fresh thermal paste before seating.</p>}
+      <p style={{ fontSize: 12.5, margin: '4px 0' }}>{KIND_ANATOMY.heatsink}</p>
+      {installed ? (
+        <>
+          <p style={{ fontSize: 12.5, margin: '4px 0' }}>
+            Loosen in the order <b>4 → 3 → 2 → 1</b>; torque in the order <b>1 → 2 → 3 → 4</b>. The numbers are printed next to each screw. Click the screws in 3D or here.
+          </p>
+          <div className="row wrap">
+            {[1, 2, 3, 4].map((n) => {
+              const tight = isTight(dev, target, `s${n}`);
+              return (
+                <button key={n} className={`btn sm ${tight ? '' : 'warn'}`} onClick={() => dispatch({ type: 'fastener', deviceId: dev.id, target, id: `s${n}`, secure: !tight })}>
+                  🔩 {n}: {tight ? 'tight → loosen' : 'loose → torque'}
+                </button>
+              );
+            })}
+          </div>
+          {seq.length > 0 && <div className="mono dim" style={{ fontSize: 12 }}>Sequence: {seq.join(' → ')}</div>}
+          <div className="actions">
+            <button className="btn primary sm" disabled={!allLoose} onClick={() => dispatch({ type: 'heatsink', deviceId: dev.id, cpu, install: false })}>
+              Lift heatsink off
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="dim" style={{ fontSize: 12 }}>Clean the old paste off with IPA and apply fresh thermal paste before seating. The CPU load frame must be closed first.</p>
+          <div className="actions">
+            <button className="btn primary sm" onClick={() => dispatch({ type: 'heatsink', deviceId: dev.id, cpu, install: true })}>
+              Seat heatsink (screws loose)
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -454,6 +516,7 @@ function SlotCard({ dev, slot }: { dev: Device; slot: string }) {
       <div>
         {back}
         <h4>{names[layer]}</h4>
+        {dev.layers[layer] && <FastenerList dev={dev} target={layer} />}
         <div className="actions">
           <button className="btn primary sm" onClick={() => dispatch({ type: 'layer', deviceId: dev.id, layer, install: !dev.layers[layer] })}>
             {dev.layers[layer] ? `Remove ${names[layer].toLowerCase()}` : `Install ${names[layer].toLowerCase()}`}
@@ -507,6 +570,18 @@ function SlotCard({ dev, slot }: { dev: Device; slot: string }) {
           </>
         )}
       </div>
+      {(c || def.kind === 'cpu') && <FastenerList dev={dev} target={slot} />}
+      <details className="anatomy">
+        <summary>About this part</summary>
+        <p>{KIND_ANATOMY[def.kind]}</p>
+        {c && (
+          <p className="dim">
+            Form factor {partSpec(c.partNumber).formFactor}
+            {partSpec(c.partNumber).watts ? ` · ${partSpec(c.partNumber).watts} W` : ''}
+            {c.dataBearing ? ' · DATA-BEARING: secure destruction only' : ''}
+          </p>
+        )}
+      </details>
       <div className="actions">
         {c && (
           <button className={`btn sm ${flagged ? 'on' : ''}`} onClick={() => dispatch(flagged ? { type: 'unflag', deviceId: dev.id, slot } : { type: 'flagFaulty', deviceId: dev.id, slot })}>
@@ -520,10 +595,10 @@ function SlotCard({ dev, slot }: { dev: Device; slot: string }) {
         )}
         {c && (
           <button className="btn sm warn" onClick={() => dispatch({ type: 'removePart', deviceId: dev.id, slot })}>
-            {isDrive ? 'Pull drive out' : def.kind === 'psu' ? 'Press release tab & pull PSU' : `Remove ${KIND_LABEL[def.kind]}`}
+            {isDrive ? 'Pull drive out' : def.kind === 'psu' ? 'Pull PSU out by its handle' : `Remove ${KIND_LABEL[def.kind]}`}
           </button>
         )}
-        {def.kind === 'psu' && dev.rackId && <CordRow dev={dev} psu={slot} />}
+        {def.kind === 'psu' && dev.rackId && w.trainee.side === 'rear' && !dev.servicePosition && <CordRow dev={dev} psu={slot} />}
         {def.kind === 'cpu' && dev.heatsinks[slot] && (
           <button className="btn sm" onClick={() => select({ deviceId: dev.id, slot: `heatsink:${slot}`, rackId: dev.rackId ?? undefined })}>
             Heatsink…

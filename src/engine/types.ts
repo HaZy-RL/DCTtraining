@@ -116,6 +116,13 @@ export interface Device {
   heatsinks: Record<string, boolean>;
   /** DIMM/drive latch state; open latches = can remove. */
   latches: Record<string, 'open' | 'closed'>;
+  /**
+   * Screws, clips, levers and tabs that hold parts and covers in place, keyed "<target>:<fastener id>"
+   * (e.g. "PSU1:tab", "lid:screw", "heatsink:CPU0:s3"). true = engaged/tight. Missing = engaged.
+   */
+  fasteners: Record<string, boolean>;
+  /** Order in which heatsink screws were turned, per "heatsink:CPUx:loosen|tighten". */
+  torque: Record<string, number[]>;
   servicePosition: boolean; // slid out on rails
   powerCords: Record<string, string | null>; // PSU slot id -> PDU outlet id
   sel: SelEntry[];
@@ -229,7 +236,9 @@ export interface Penalty {
 
 export interface Trainee {
   name: string;
-  location: string | null; // rackId or 'noc' / 'cage'
+  location: string | null; // rackId, 'aisle', 'noc' or 'cage'
+  /** Which aisle the trainee is standing in at the rack: front = cold aisle, rear = hot aisle. */
+  side: 'front' | 'rear';
   esdStrap: boolean;
   /** Components the trainee flagged as faulty: "deviceId:slot" */
   flagged: string[];

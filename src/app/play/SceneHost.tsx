@@ -1,4 +1,6 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
+import { useWalker } from '../scenes/three/walker';
+import { useCoach } from './guide';
 import { useStore } from '../store';
 import { DeskScene } from '../scenes/DeskScene';
 import { QuizScene } from '../scenes/QuizScene';
@@ -13,26 +15,43 @@ const FiberBench = lazy(() => import('../scenes/FiberBench'));
 
 function SceneControls() {
   const view = useStore((s) => s.view);
-  const setView = useStore((s) => s.setView);
+  const goAisle = useStore((s) => s.goAisle);
   const select = useStore((s) => s.select);
   const inst = useStore((s) => s.inst!);
   const w = useStore((s) => s.world!);
   const sel = useStore((s) => s.sel);
+  const camMode = useStore((s) => s.camMode);
+  const setCamMode = useStore((s) => s.setCamMode);
   const dispatch = useStore((s) => s.dispatch);
   const rackId = sel.rackId ?? inst.focusRackId;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
+      const st = useStore.getState();
+      if (e.key === 'v' || e.key === 'V') st.setCamMode(st.camMode === 'walk' ? 'inspect' : 'walk');
+      else if (e.key === 'Escape' && st.camMode === 'walk') st.setCamMode('inspect');
+      else if ((e.key === 'f' || e.key === 'F') && st.sel.deviceId) st.setCamMode('inspect');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <div className="overlay scene-ctrl">
-      <button className={`btn sm ${view === 'front' ? 'on' : ''}`} onClick={() => setView('front')}>
-        Front (cold aisle)
+      <button className={`btn sm ${camMode === 'walk' ? 'on primary' : ''}`} onClick={() => setCamMode(camMode === 'walk' ? 'inspect' : 'walk')} title="Toggle first-person walking (V)">
+        {camMode === 'walk' ? '🔍 Inspect camera' : '🚶 Walk mode'}
       </button>
-      <button className={`btn sm ${view === 'rear' ? 'on' : ''}`} onClick={() => setView('rear')}>
-        Rear (hot aisle)
+      <button className={`btn sm ${view === 'front' ? 'on' : ''}`} onClick={() => goAisle('front')} title="If you're at a rack, this walks you round to the cold aisle">
+        ❄ Front (cold aisle)
+      </button>
+      <button className={`btn sm ${view === 'rear' ? 'on' : ''}`} onClick={() => goAisle('rear')} title="If you're at a rack, this walks you round to the hot aisle">
+        🔥 Rear (hot aisle)
       </button>
       <button className="btn sm" onClick={() => select({ rackId })}>
         ⟲ Rack view
       </button>
       {rackId && w.trainee.location !== rackId && (
-        <button className="btn sm primary" onClick={() => dispatch({ type: 'walk', to: rackId })}>
+        <button className="btn sm primary" onClick={() => dispatch({ type: 'walk', to: rackId, side: view })}>
           🚶 Walk here
         </button>
       )}
@@ -52,6 +71,55 @@ function SceneControls() {
   );
 }
 
+/** Crosshair, controls help and a top-down minimap while walking. */
+function WalkHud() {
+  const camMode = useStore((s) => s.camMode);
+  const w = useStore((s) => s.world!);
+  const inst = useStore((s) => s.inst!);
+  const sel = useStore((s) => s.sel);
+  const wk = useWalker();
+  const coach = useCoach();
+  if (camMode !== 'walk') return null;
+  const focus = w.racks[sel.rackId ?? inst.focusRackId ?? ''] ?? Object.values(w.racks)[0];
+  const origin = w.racks[inst.focusRackId ?? focus.id]?.position ?? focus.position;
+  const row = Object.values(w.racks).filter((r) => r.row === focus.row);
+  const target = coach.visible && coach.current?.target?.rackId ? coach.current.target.rackId : focus.id;
+  // map: x in scene units → px; z likewise
+  const S = 2.2;
+  const cx = 110;
+  const cz = 60;
+  const px = (x: number) => cx + (x - wk.x) * S * 0.5;
+  const pz = (z: number) => cz - z * S * 0.5;
+  return (
+    <>
+      <div className="crosshair" />
+      <div className="overlay walk-help">
+        <b>WASD</b> walk · <b>drag</b> look · <b>Shift</b> run · <b>click</b> to use · <b>V</b> inspect
+      </div>
+      <svg className="overlay minimap" width={220} height={120} viewBox="0 0 220 120">
+        <rect x={0} y={0} width={220} height={120} rx={10} fill="rgba(13,19,27,0.82)" />
+        <rect x={0} y={20} width={220} height={cz - 26} fill="#2f7de1" opacity={0.18} />
+        <rect x={0} y={cz + 6} width={220} height={cz - 26} fill="#e1442f" opacity={0.18} />
+        {row.map((r) => {
+          const x = (r.position - origin) * 6.15;
+          const isT = r.id === target;
+          const here = r.id === w.trainee.location;
+          return <rect key={r.id} x={px(x) - 6.6} y={cz - 5.9} width={13.2} height={11.8} fill={isT ? '#ffd166' : here ? '#2bb3a3' : '#4a5563'} stroke="#0b0f14" strokeWidth={1} />;
+        })}
+        <text x={8} y={16} fill="#9fd3ff" fontSize={10}>
+          ❄ cold aisle (front)
+        </text>
+        <text x={8} y={112} fill="#ffb3a6" fontSize={10}>
+          🔥 hot aisle (rear)
+        </text>
+        <g transform={`translate(${cx} ${pz(wk.z)}) rotate(${180 + (wk.yaw * 180) / Math.PI})`}>
+          <polygon points="0,-7 5,5 0,2 -5,5" fill="#2bff6a" />
+        </g>
+      </svg>
+    </>
+  );
+}
+
 const Loading = () => <div className="bench muted">Loading 3D…</div>;
 
 export function SceneHost() {
@@ -65,6 +133,7 @@ export function SceneHost() {
             <RackScene buildMode={scene === 'rackbuild'} />
           </Suspense>
           <SceneControls />
+          <WalkHud />
           <Inspector buildMode={scene === 'rackbuild'} />
         </>
       );

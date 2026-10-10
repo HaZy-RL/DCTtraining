@@ -1,21 +1,26 @@
 // The ActionBus reducer. Every trainee interaction becomes an Action applied here,
 // so rules, penalties, flags and the action log stay in one place.
-import { MODELS, partSpec } from './catalog';
+import { fastenersOf, MODELS, partSpec } from './catalog';
+import { fkey, heldBy, isTight, looseAfterInsert } from './fasteners';
 import { addCable } from './factory';
 import { fitsSlot, hasAC, linkState, locationOf, psuGood, psuSlots, rackWeightKg } from './projectors';
 import { addSel, advance, bootFromOrder, expectedPn, flag, hasFlag, log, modelSlot, penalize, powerOff, powerOn, recomputePower, schedule, ticketForDevice, ticketForLocation, toast } from './sim';
 import type { BinKind, CableType, Component, Device, PortRef, TicketStatus, World } from './types';
 
 export type Layer = 'lid' | 'shroud' | 'riser1' | 'riser2';
+export type Side = 'front' | 'rear';
 
 export type Action =
-  | { type: 'walk'; to: string }
+  | { type: 'walk'; to: string; side?: Side }
+  /** Free-roam walking in 3D: you arrived somewhere on foot (no extra time cost). */
+  | { type: 'arrive'; to: string; side: Side }
+  | { type: 'fastener'; deviceId: string; target: string; id: string; secure: boolean }
   | { type: 'esd'; on: boolean }
   | { type: 'liftAssist'; on: boolean }
   | { type: 'scanAsset'; deviceId: string }
   | { type: 'servicePosition'; deviceId: string; out: boolean }
   | { type: 'layer'; deviceId: string; layer: Layer; install: boolean }
-  | { type: 'heatsink'; deviceId: string; cpu: string; install: boolean; order: number[] }
+  | { type: 'heatsink'; deviceId: string; cpu: string; install: boolean; order?: number[] }
   | { type: 'latch'; deviceId: string; slot: string; state: 'open' | 'closed' }
   | { type: 'removePart'; deviceId: string; slot: string }
   | { type: 'insertPart'; deviceId: string; slot: string; source: { spareIndex: number } | { trayUid: string }; aligned?: boolean }
@@ -66,6 +71,7 @@ export type Action =
 
 const DUR: Partial<Record<Action['type'], number>> = {
   esd: 5,
+  fastener: 4,
   scanAsset: 5,
   servicePosition: 15,
   layer: 10,
@@ -120,6 +126,46 @@ function atDevice(w: World, dev: Device): string | null {
   return null;
 }
 
+const AISLE = { front: 'cold aisle (front)', rear: 'hot aisle (rear)' } as const;
+
+function needSide(w: World, dev: Device, side: Side, what = 'That'): string | null {
+  if (!dev.rackId || w.trainee.side === side) return null;
+  return side === 'rear'
+    ? `You're in the cold aisle at the front of ${dev.rackId}. ${what} is on the back of the server: walk around to the hot aisle (rear) first.`
+    : `You're in the hot aisle behind ${dev.rackId}. ${what} is on the front of the server: walk around to the cold aisle (front) first.`;
+}
+
+/** Front of the chassis: bays, power button, rack ears, and everything inside once it's slid out. */
+function frontReach(w: World, dev: Device, what?: string): string | null {
+  return atDevice(w, dev) ?? needSide(w, dev, 'front', what);
+}
+
+/** Back of the chassis: PSUs, cords, NIC, cables. Unreachable while the server is slid out the front. */
+function rearReach(w: World, dev: Device, what?: string): string | null {
+  const r = atDevice(w, dev) ?? needSide(w, dev, 'rear', what);
+  if (r) return r;
+  if (dev.rackId && dev.servicePosition)
+    return `${dev.hostname} is slid out to the service position, so its back end is now buried mid-rack behind the cable-management arm. Slide it back into the rack before working on the rear.`;
+  return null;
+}
+
+/** Turn one heatsink screw; checks the cross pattern once all four have been turned the same way. */
+function turnScrew(w: World, dev: Device, cpu: string, n: number, tighten: boolean) {
+  const target = `heatsink:${cpu}`;
+  if (isTight(dev, target, `s${n}`) === tighten) return;
+  dev.fasteners[fkey(target, `s${n}`)] = tighten;
+  const key = `${target}:${tighten ? 'tighten' : 'loosen'}`;
+  dev.torque[`${target}:${tighten ? 'loosen' : 'tighten'}`] = [];
+  const seq = (dev.torque[key] = [...(dev.torque[key] ?? []), n]);
+  if ([1, 2, 3, 4].every((m) => isTight(dev, target, `s${m}`) === tighten)) {
+    const expected = tighten ? [1, 2, 3, 4] : [4, 3, 2, 1];
+    if (seq.join() !== expected.join())
+      penalize(w, 'torque_sequence', 3, `Wrong screw sequence on the ${cpu} heatsink (${seq.join('→')}, should be ${expected.join('→')})`, { key: `${dev.id}:${cpu}:${tighten}` });
+    if (tighten) flag(w, `heatsink_on:${dev.id}:${cpu}`);
+    dev.torque[key] = [];
+  }
+}
+
 /** Hazard level if you touch non-hot-swap internals right now. */
 function powerHazard(w: World, dev: Device): 'running' | 'standby' | 'flea' | 'safe' {
   if (dev.power === 'on' || dev.power === 'posting') return 'running';
@@ -168,7 +214,8 @@ function internalTouch(w: World, dev: Device, what: string): ActionResult | null
 function slotReachable(w: World, dev: Device, slot: string): string | null {
   const def = modelSlot(dev, slot);
   if (!def) return `No slot ${slot}.`;
-  const at = atDevice(w, dev);
+  if (def.access === 'rear') return rearReach(w, dev, `${def.label}`);
+  const at = frontReach(w, dev, def.access === 'front' ? def.label : 'The inside of the chassis');
   if (at) return at;
   if (def.access === 'internal') {
     if (dev.rackId && !dev.servicePosition) return 'Slide the server out to the service position on its rails first.';
@@ -193,7 +240,7 @@ export function applyAction(w: World, a: Action): ActionResult {
   const r = reduce(w, a);
   const dur = r.ok ? (DUR[a.type] ?? 0) : 0;
   if (dur) advance(w, dur);
-  if (a.type !== 'notes' && a.type !== 'setFlag') log(w, a.type, r.message, r.ok);
+  if (a.type !== 'notes' && a.type !== 'setFlag' && !(a.type === 'arrive' && !r.message)) log(w, a.type, r.message, r.ok);
   if (!r.ok && a.type !== 'setFlag') toast(w, 'error', r.message);
   return r;
 }
@@ -201,7 +248,20 @@ export function applyAction(w: World, a: Action): ActionResult {
 function reduce(w: World, a: Action): ActionResult {
   switch (a.type) {
     case 'walk': {
-      if (w.trainee.location === a.to) return ok('Already here.');
+      const rackTo = w.racks[a.to];
+      const side: Side = a.side ?? (rackTo && w.trainee.location !== a.to ? 'front' : w.trainee.side);
+      if (w.trainee.location === a.to && side === w.trainee.side) return ok('Already here.');
+      if (w.trainee.location === a.to && rackTo) {
+        // Same rack, other aisle: walk around the end of the row.
+        const row = Object.values(w.racks).filter((r) => r.row === rackTo.row).map((r) => r.position);
+        const steps = Math.min(rackTo.position - Math.min(...row), Math.max(...row) - rackTo.position) + 2;
+        const secs = 10 + steps * 5;
+        advance(w, secs);
+        w.trainee.side = side;
+        flag(w, `side:${a.to}:${side}`);
+        return ok(`Walked around the end of row ${rackTo.row} to the ${AISLE[side]} of ${rackTo.location} (${secs}s).`);
+      }
+      w.trainee.side = side;
       const from = w.trainee.location;
       const fr = from ? w.racks[from] : undefined;
       const to = w.racks[a.to];
@@ -219,7 +279,58 @@ function reduce(w: World, a: Action): ActionResult {
           toast(w, 'success', `Scanned out ${picked.length} part(s) from the cage onto your cart.`);
         }
       }
-      return ok(`Walked to ${to ? to.location : a.to === 'noc' ? 'the DCO desk' : a.to === 'cage' ? 'the parts cage' : a.to} (${secs}s).`);
+      if (to) flag(w, `side:${a.to}:${side}`);
+      return ok(`Walked to ${to ? `${to.location}, ${AISLE[side]}` : a.to === 'noc' ? 'the DCO desk' : a.to === 'cage' ? 'the parts cage' : a.to} (${secs}s).`);
+    }
+    case 'arrive': {
+      w.trainee.location = a.to;
+      w.trainee.side = a.side;
+      if (w.racks[a.to]) {
+        flag(w, `at:${a.to}`);
+        flag(w, `side:${a.to}:${a.side}`);
+        return ok(`Arrived at ${w.racks[a.to].location}, ${AISLE[a.side]}.`);
+      }
+      return ok('');
+    }
+    case 'fastener': {
+      const dev = w.devices[a.deviceId];
+      if (!dev) return err('No device.');
+      const fd = fastenersOf(dev.model, a.target).find((f) => f.id === a.id);
+      if (!fd) return err('Nothing to undo there.');
+      let reach: string | null = null;
+      if (a.target.startsWith('heatsink:')) {
+        const cpu = a.target.split(':')[1];
+        reach = frontReach(w, dev);
+        if (!reach && dev.rackId && !dev.servicePosition) reach = 'Slide the server out to the service position first.';
+        if (!reach && (dev.layers.lid || dev.layers.shroud)) reach = 'Remove the lid and the air shroud first.';
+        if (!reach && !dev.heatsinks[cpu]) reach = `There is no heatsink seated on ${cpu}.`;
+        if (reach) return err(reach);
+        processChecks(w, dev);
+        const n = Number(a.id.slice(1));
+        if (isTight(dev, a.target, a.id) === a.secure) return ok(`Screw ${n} is already ${a.secure ? 'torqued' : 'loose'}.`);
+        turnScrew(w, dev, cpu, n, a.secure);
+        advance(w, 6);
+        const seq = dev.torque[`${a.target}:${a.secure ? 'tighten' : 'loosen'}`] ?? [];
+        return ok(`${a.secure ? fd.secure : fd.release}${seq.length ? ` (sequence so far: ${seq.join(' → ')})` : ''}.`);
+      }
+      if (a.target === 'chassis') {
+        reach = dev.rackId ? frontReach(w, dev, 'The rack-ear latch') : 'The server is not in a rack.';
+      } else if (a.target === 'lid' || a.target === 'riser1' || a.target === 'riser2') {
+        reach = frontReach(w, dev);
+        if (!reach && dev.rackId && !dev.servicePosition) reach = 'Slide the server out to the service position first. The cover only clears the rack once it is extended.';
+        if (!reach && a.target !== 'lid' && dev.layers.lid) reach = 'Remove the lid first.';
+        if (!reach && !dev.layers[a.target]) reach = `The ${a.target === 'lid' ? 'lid' : a.target.replace('riser', 'Riser ')} is not installed.`;
+      } else {
+        reach = slotReachable(w, dev, a.target);
+        if (!reach && !dev.slots[a.target] && a.id !== 'frame') reach = `Nothing is installed in ${a.target}.`;
+      }
+      if (reach) return err(reach);
+      if (isTight(dev, a.target, a.id) === a.secure) return ok(`The ${fd.label.toLowerCase()} is already ${a.secure ? 'secured' : 'released'}.`);
+      if (!a.secure) processChecks(w, dev);
+      dev.fasteners[fkey(a.target, a.id)] = a.secure;
+      if (fd.kind === 'screw') advance(w, 6);
+      flag(w, `fastener:${dev.id}:${a.target}:${a.id}:${a.secure ? 'tight' : 'loose'}`);
+      return ok(`${a.secure ? fd.secure : fd.release}.${fd.tool ? ` (${fd.tool})` : ''}`);
     }
     case 'esd':
       w.trainee.esdStrap = a.on;
@@ -244,33 +355,45 @@ function reduce(w: World, a: Action): ActionResult {
     case 'servicePosition': {
       const dev = w.devices[a.deviceId];
       if (!dev?.rackId) return err('Device is not racked.');
-      const at = atDevice(w, dev);
+      const at = frontReach(w, dev, 'The slide rails release');
       if (at) return err(at);
+      if (a.out === dev.servicePosition) return ok(a.out ? 'Already in the service position.' : 'Already in the rack.');
       if (!a.out && !dev.layers.lid) return err('Install the lid before sliding the server back in.');
+      if (!a.out && !isTight(dev, 'lid', 'latch')) return err('Press the cover latch flat first. A raised latch catches on the server above.');
       if (a.out && Object.values(w.devices).some((d) => d.id !== dev.id && d.rackId === dev.rackId && d.servicePosition))
         return err('Another server in this rack is already extended. Only extend one at a time (rack tip hazard).');
+      const ear = a.out ? heldBy(dev, 'chassis') : undefined;
+      if (ear) return err(`The chassis is still locked into the rack by its ${ear.label.toLowerCase()}. ${ear.release} (both sides) first.`);
       processChecks(w, dev);
       dev.servicePosition = a.out;
+      if (!a.out) looseAfterInsert(dev, 'chassis');
       return ok(a.out ? 'Released the rail locks and slid the server out to the service position.' : 'Slid the server back into the rack until the rail latches clicked.');
     }
     case 'layer': {
       const dev = w.devices[a.deviceId];
       if (!dev) return err('No device.');
-      const at = atDevice(w, dev);
+      const at = frontReach(w, dev);
       if (at) return err(at);
       if (dev.rackId && !dev.servicePosition) return err('Slide the server out to the service position first.');
       if (a.layer !== 'lid' && dev.layers.lid) return err('Remove the lid first.');
+      if (a.install === dev.layers[a.layer]) return ok(`The ${a.layer === 'shroud' ? 'air shroud' : a.layer} is already ${a.install ? 'installed' : 'out'}.`);
       if (a.install) {
+        if (a.layer === 'shroud' && Object.entries(dev.heatsinks).some(([cpu, on]) => !on && dev.slots[cpu])) toast(w, 'warn', 'A CPU has no heatsink under that shroud!');
         if (a.layer === 'lid' && (!dev.layers.shroud || !dev.layers.riser1 || !dev.layers.riser2) && !hasFlag(w, `warned_lid:${dev.id}`)) {
           flag(w, `warned_lid:${dev.id}`);
           // allowed but probably a mistake
         }
         dev.layers[a.layer] = true;
+        looseAfterInsert(dev, a.layer);
+        const loose = fastenersOf(dev.model, a.layer);
+        if (loose.length) toast(w, 'info', `Now secure it: ${loose.map((f) => f.label.toLowerCase()).join(' and ')}.`);
         if (a.layer === 'lid') {
           addSel(w, dev, 'Physical Security', 'General Chassis Intrusion', 'info', 'Deasserted');
         }
         return ok(`Installed the ${a.layer === 'shroud' ? 'air shroud' : a.layer}.`);
       }
+      const held = heldBy(dev, a.layer);
+      if (held) return err(`The ${a.layer === 'lid' ? 'lid' : a.layer.replace('riser', 'Riser ')} is still held by its ${held.label.toLowerCase()}. ${held.release} first.`);
       processChecks(w, dev);
       if (a.layer === 'lid') {
         if (dev.power === 'on') toast(w, 'warn', 'Lid off on a running server — airflow is compromised. Work fast (hot-swap fans only).');
@@ -286,21 +409,34 @@ function reduce(w: World, a: Action): ActionResult {
     case 'heatsink': {
       const dev = w.devices[a.deviceId];
       if (!dev) return err('No device.');
-      const at = atDevice(w, dev);
+      const at = frontReach(w, dev);
       if (at) return err(at);
+      if (dev.rackId && !dev.servicePosition) return err('Slide the server out to the service position first.');
       if (dev.layers.lid || dev.layers.shroud) return err('Remove the lid and air shroud first.');
       processChecks(w, dev);
-      internalTouch(w, dev, `${a.cpu} heatsink`);
-      const tighten = [1, 2, 3, 4];
-      const loosen = [4, 3, 2, 1];
-      const expected = a.install ? tighten : loosen;
-      if (a.order.join() !== expected.join()) {
-        penalize(w, 'torque_sequence', 3, `Wrong screw sequence on the ${a.cpu} heatsink (should be ${expected.join('→')})`, { key: `${dev.id}:${a.cpu}:${a.install}` });
+      const target = `heatsink:${a.cpu}`;
+      if (!a.install) {
+        if (!dev.heatsinks[a.cpu]) return err(`There is no heatsink on ${a.cpu}.`);
+        if (a.order) for (const n of a.order) turnScrew(w, dev, a.cpu, n, false);
+        const tight = [1, 2, 3, 4].filter((n) => isTight(dev, target, `s${n}`));
+        if (tight.length) return err(`Heatsink screw${tight.length > 1 ? 's' : ''} ${tight.join(', ')} still tight. Loosen all four in the order 4 → 3 → 2 → 1 before lifting.`);
+        internalTouch(w, dev, `${a.cpu} heatsink`);
+        dev.heatsinks[a.cpu] = false;
+        return ok(`Lifted the heatsink off ${a.cpu}, twisting gently to break the thermal-paste seal. Wipe the old paste off both surfaces with IPA.`);
       }
-      if (a.install && !dev.slots[a.cpu]) return err(`Install the CPU in ${a.cpu} before the heatsink.`);
-      dev.heatsinks[a.cpu] = a.install;
-      if (a.install) flag(w, `heatsink_on:${dev.id}:${a.cpu}`);
-      return ok(a.install ? `Heatsink seated on ${a.cpu}; screws torqued in sequence ${a.order.join('-')}.` : `Heatsink removed from ${a.cpu}. Wipe old thermal paste with IPA.`);
+      if (dev.heatsinks[a.cpu]) return err('That heatsink is already seated.');
+      if (!dev.slots[a.cpu]) return err(`Install the CPU in ${a.cpu} before the heatsink.`);
+      if (!isTight(dev, a.cpu, 'frame')) return err('Close the socket load frame and hook its lever before seating the heatsink.');
+      internalTouch(w, dev, `${a.cpu} heatsink`);
+      dev.heatsinks[a.cpu] = true;
+      looseAfterInsert(dev, target);
+      dev.torque[`${target}:tighten`] = [];
+      if (a.order) for (const n of a.order) turnScrew(w, dev, a.cpu, n, true);
+      return ok(
+        a.order
+          ? `Heatsink seated on ${a.cpu}; screws torqued in sequence ${a.order.join('-')}.`
+          : `Applied fresh thermal paste and set the heatsink on ${a.cpu} with its screws loose. Now torque the screws in the order 1 → 2 → 3 → 4.`,
+      );
     }
     case 'latch': {
       const dev = w.devices[a.deviceId];
@@ -343,6 +479,8 @@ function reduce(w: World, a: Action): ActionResult {
       if (!c) return err(`${a.slot} is empty.`);
       const def = modelSlot(dev, a.slot)!;
       processChecks(w, dev);
+      const held = heldBy(dev, a.slot);
+      if (held) return err(`${def.label} is still held in by its ${held.label.toLowerCase()}. ${held.release} first.`);
       if (def.kind === 'dimm' && dev.latches[a.slot] !== 'open') return err('Open the DIMM latches at both ends first.');
       if ((def.kind === 'hdd' || def.kind === 'nvme') && dev.latches[a.slot] !== 'open') return err('Release the drive carrier handle first.');
       if (def.kind === 'psu') {
@@ -394,6 +532,8 @@ function reduce(w: World, a: Action): ActionResult {
         if (partSpec(part.partNumber).kind === def.kind) penalize(w, 'wrong_form_factor', 2, `Tried to force a part that doesn't fit: ${fit.why}`, { key: part.partNumber });
         return err(`Won't fit: ${fit.why}`);
       }
+      const shut = fastenersOf(dev.model, a.slot).find((f) => !f.spring && f.gatesRemoval !== false && dev.fasteners[fkey(a.slot, f.id)] === true);
+      if (shut) return err(`The ${shut.label.toLowerCase()} is closed over the empty slot. Open it first.`);
       if (def.kind === 'dimm' && a.aligned === false) return err('The DIMM notch is not lined up with the key in the slot. Rotate it 180° — never force it.');
       if (def.kind === 'cpu' && a.aligned === false) {
         penalize(w, 'bent_pins', 30, 'CPU dropped in misaligned — pin-1 triangle not matched. Socket pins bent; motherboard is now damaged', { safety: false, key: dev.id });
@@ -405,6 +545,7 @@ function reduce(w: World, a: Action): ActionResult {
       delete installed.fromSlot;
       delete installed.fromDevice;
       dev.slots[a.slot] = installed;
+      looseAfterInsert(dev, a.slot);
       if (fromSpare >= 0) w.spares.splice(fromSpare, 1);
       else w.trainee.tray = w.trainee.tray.filter((p) => p.uid !== part!.uid);
       if (def.kind === 'dimm' || def.kind === 'hdd' || def.kind === 'nvme') dev.latches[a.slot] = 'open';
@@ -420,13 +561,23 @@ function reduce(w: World, a: Action): ActionResult {
         if (hasAC(w, dev)) addSel(w, dev, `Power Supply ${a.slot}`, 'Presence detected', 'info');
       }
       if (def.kind === 'fan' && hasAC(w, dev)) addSel(w, dev, `Fan ${a.slot}`, 'Fan redundancy regained', 'info');
-      const latchNote = def.kind === 'dimm' ? ' Now press down firmly until both latches snap closed.' : def.kind === 'hdd' || def.kind === 'nvme' ? ' Push it home and close the carrier handle.' : '';
+      const toSecure = fastenersOf(dev.model, a.slot).filter((f) => !f.spring && f.gatesRemoval !== false);
+      const latchNote =
+        def.kind === 'dimm'
+          ? ' Now press down firmly until both latches snap closed.'
+          : def.kind === 'hdd' || def.kind === 'nvme'
+            ? ' Push it home and close the carrier handle.'
+            : def.kind === 'psu'
+              ? ' It clicked home: the release tab re-engaged.'
+              : toSecure.length
+                ? ` Now secure it: ${toSecure.map((f) => f.label.toLowerCase()).join(', ')}.`
+                : '';
       return ok(`Inserted ${partSpec(part.partNumber).desc} (S/N ${part.serial}) into ${a.slot}.${latchNote}`);
     }
     case 'powerButton': {
       const dev = w.devices[a.deviceId];
       if (!dev) return err('No device.');
-      const at = atDevice(w, dev);
+      const at = frontReach(w, dev, 'The power button');
       if (at) return err(at);
       if (!hasAC(w, dev)) {
         flag(w, `flea_drained:${dev.id}`);
@@ -438,8 +589,10 @@ function reduce(w: World, a: Action): ActionResult {
     case 'cord': {
       const dev = w.devices[a.deviceId];
       if (!dev) return err('No device.');
-      const at = atDevice(w, dev);
+      const at = rearReach(w, dev, 'The power inlet');
       if (at) return err(at);
+      if (!a.outlet && dev.powerCords[a.psu] && dev.slots[a.psu] && isTight(dev, a.psu, 'bail'))
+        return err(`The ${a.psu} cord is locked in by its retention bail. Flip the bail off the plug first.`);
       if (a.outlet) {
         if (Object.values(w.devices).some((d) => Object.values(d.powerCords).includes(a.outlet!)))
           return err(`Outlet ${a.outlet} already has a cord plugged in.`);
@@ -447,18 +600,24 @@ function reduce(w: World, a: Action): ActionResult {
       }
       if (!a.outlet) processChecks(w, dev);
       dev.powerCords[a.psu] = a.outlet;
+      if (dev.slots[a.psu]) dev.fasteners[fkey(a.psu, 'bail')] = false;
       dev.quirks = dev.quirks.filter((q) => q !== `loose_cord:${a.psu}`);
       if (!Object.values(dev.powerCords).some(Boolean)) flag(w, `unplugged:${dev.id}`);
       recomputePower(w, dev, a.outlet ? 'cord plugged' : `${a.psu} cord unplugged`);
       if (a.outlet && hasAC(w, dev)) addSel(w, dev, `Power Supply ${a.psu}`, 'AC input restored', 'info');
       if (a.outlet) flag(w, `cord_in:${dev.id}:${a.psu}`);
-      return ok(a.outlet ? `Plugged ${a.psu} into ${a.outlet} and engaged the retention clip.` : `Unplugged the power cord from ${a.psu}.`);
+      return ok(
+        a.outlet
+          ? `Plugged ${a.psu} into ${a.outlet}.${dev.slots[a.psu] ? ' Now snap the retention bail over the plug so it cannot work loose.' : ''}`
+          : `Unplugged the power cord from ${a.psu}.`,
+      );
     }
     case 'reseatCord': {
       const dev = w.devices[a.deviceId];
       if (!dev) return err('No device.');
-      const at = atDevice(w, dev);
+      const at = rearReach(w, dev, 'The power cord');
       if (at) return err(at);
+      if (dev.slots[a.psu]) dev.fasteners[fkey(a.psu, 'bail')] = true;
       const wasLoose = dev.quirks.includes(`loose_cord:${a.psu}`);
       dev.quirks = dev.quirks.filter((q) => q !== `loose_cord:${a.psu}`);
       recomputePower(w, dev, 'cord reseated');
@@ -511,7 +670,7 @@ function reduce(w: World, a: Action): ActionResult {
       for (const end of [a.a, a.b]) {
         const d = w.devices[end.deviceId];
         if (!d) return err('No device.');
-        const at = atDevice(w, d);
+        const at = d.role === 'server' ? rearReach(w, d, 'That port') : atDevice(w, d) ?? needSide(w, d, 'rear', 'The switch port');
         if (at) return err(at);
         if (Object.values(w.cables).some((c) => (c.a?.deviceId === end.deviceId && c.a.port === end.port) || (c.b?.deviceId === end.deviceId && c.b.port === end.port)))
           return err(`${d.hostname} ${end.port} already has a cable.`);
@@ -538,7 +697,7 @@ function reduce(w: World, a: Action): ActionResult {
       for (const end of [c.a, c.b]) {
         if (!end) continue;
         const d = w.devices[end.deviceId];
-        const at = d && atDevice(w, d);
+        const at = d && (atDevice(w, d) ?? needSide(w, d, 'rear', 'The cable'));
         if (at) return err(at);
       }
       if (a.end) c[a.end] = null;
@@ -571,7 +730,7 @@ function reduce(w: World, a: Action): ActionResult {
       if (!c) return err('No such cable.');
       for (const end of [c.a, c.b]) {
         const d = end && w.devices[end.deviceId];
-        const at = d && atDevice(w, d);
+        const at = d && (atDevice(w, d) ?? needSide(w, d, 'rear', 'The cable'));
         if (at) return err(at);
       }
       c.condition = 'ok';
@@ -608,6 +767,7 @@ function reduce(w: World, a: Action): ActionResult {
       const rack = w.racks[a.rackId];
       if (!dev || !rack) return err('No device/rack.');
       if (w.trainee.location !== a.rackId) return err('Walk to the rack first.');
+      if (w.trainee.side !== 'front') return err('Servers are racked from the front: walk around to the cold aisle first.');
       const rails = rack.rails[a.u];
       if (!rails) return err(`No rails installed at U${a.u}.`);
       if (rails.heightU !== dev.heightU) return err(`Those are ${rails.heightU}U rails; ${dev.hostname} is ${dev.heightU}U.`);
@@ -628,7 +788,8 @@ function reduce(w: World, a: Action): ActionResult {
       const dev = w.devices[a.deviceId];
       if (!dev?.rackId) return err('Not racked.');
       if (w.trainee.location !== dev.rackId) return err('Walk to the rack first.');
-      if (Object.values(dev.powerCords).some(Boolean)) return err('Unplug the power cords first.');
+      if (Object.values(dev.powerCords).some(Boolean)) return err('Unplug the power cords first (at the rear).');
+      if (w.trainee.side !== 'front') return err('Servers come out of the front of the rack: walk around to the cold aisle first.');
       if (Object.values(w.cables).some((c) => c.a?.deviceId === dev.id || c.b?.deviceId === dev.id)) return err('Disconnect all network cables first.');
       if (dev.weightKg > 23 && !w.trainee.liftAssist)
         penalize(w, 'solo_lift', 10, `Lifted a ${dev.weightKg} kg server alone`, { safety: true, key: dev.id });
@@ -642,6 +803,7 @@ function reduce(w: World, a: Action): ActionResult {
       const pdu = rack?.pdus.find((p) => p.side === a.side);
       if (!pdu) return err('No PDU.');
       if (w.trainee.location !== a.rackId) return err('Walk to the rack first.');
+      if (w.trainee.side !== 'rear') return err('The PDUs are mounted at the back of the rack: walk around to the hot aisle first.');
       pdu.breakerTripped = !a.on;
       for (const d of Object.values(w.devices)) if (d.rackId === a.rackId) recomputePower(w, d, `PDU-${a.side} breaker ${a.on ? 'on' : 'off'}`);
       if (a.on) flag(w, `breaker_reset:${a.rackId}:${a.side}`);

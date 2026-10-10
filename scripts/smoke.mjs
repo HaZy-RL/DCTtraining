@@ -83,7 +83,7 @@ try {
     ['Out-of-Band', 'PXE boot loop', 'oob-pxe'],
   ]) {
     await page.goto(base, { waitUntil: 'networkidle' });
-    await page.locator('.tile', { hasText: mod }).first().click();
+    await page.locator('.zone', { hasText: mod }).first().click();
     await page.locator('.card.scenario', { hasText: title }).getByRole('button', { name: /Start/ }).click();
     await page.getByRole('button', { name: /Clock in/ }).click();
     await page.waitForTimeout(3000);

@@ -4,7 +4,7 @@ An interactive, 3D, game-style web app that trains datacenter technicians (DCTs)
 hyperscale work: triage through the BMC/OOB network, dig through Linux, walk to the rack,
 swap the failed part, cable, rack & stack, and document it all in a Jira-style ticket.
 
-> **Status:** v0.1 is playable. 10 modules and 46 scenarios, each with Learn, Practice
+> **Status:** v0.2 is playable. 10 modules and 46 scenarios, each with Learn, Practice
 > and Challenge modes. Engine tests and headless-browser E2E tests pass.
 
 ## The core idea
@@ -20,6 +20,11 @@ Every module runs on the **same simulated datacenter** (`src/engine`). A failed 
 | 3D chassis | amber fault LED next to slot A1 once the lid is off |
 | Ticket | "Host rebooted unexpectedly 2x in 24h…" |
 
+It's physical: walk the hall in first person (WASD), go round to the hot aisle for PSUs and cords, lift the
+rack-ear latches and slide the server out, back out the lid screw, loosen heatsink screws in a cross pattern, flip the cord
+bail and press the release tab. You can't pull a PSU from the back of a server that's slid out the front. In Learn mode a
+coach walks you through each of those steps with a marker on the exact screw; in Practice it's one click away.
+
 Everything you do is an **action** that goes through one reducer with real rules. Pull a
 DIMM from a running host, skip the ESD strap, power off an undrained production host, send
 a drive to RMA instead of secure destruction, rack a 34 kg server alone, or look into a live
@@ -30,7 +35,7 @@ fiber, and you are penalized. All of it shows up in the after-action review.
 ```bash
 npm install
 npm run dev          # http://localhost:5173/DCTtraining/
-npm test             # 65 engine/shell/scenario tests (vitest)
+npm test             # 67 engine/shell/scenario tests (vitest)
 npm run build        # static build in dist/ (base path /DCTtraining/)
 node scripts/smoke.mjs out/     # headless browser smoke test of every scene (needs `npx playwright install chromium`)
 node scripts/e2e-psu.mjs out/   # full PSU swap through the real UI, expects Gold

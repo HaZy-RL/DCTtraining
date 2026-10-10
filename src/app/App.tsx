@@ -21,6 +21,9 @@ function parseHash(): Screen {
 export function App() {
   const screen = useStore((s) => s.screen);
   useEffect(() => {
+    document.body.dataset.theme = screen.name === 'play' ? 'dark' : 'bright';
+  }, [screen.name]);
+  useEffect(() => {
     if (useStore.getState().screen.name === 'menu') useStore.setState({ screen: parseHash() });
     const onHash = () => {
       const cur = useStore.getState().screen.name;

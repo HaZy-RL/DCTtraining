@@ -375,3 +375,88 @@ export const KIND_LABEL: Record<ComponentKind, string> = {
   cmos: 'CMOS battery',
   heatsink: 'Heatsink',
 };
+
+// ---------- fasteners ----------
+// Everything that physically holds a part or cover in place. The trainee has to work each one
+// by hand (in 3D or from the inspector) before the part comes out, and secure it again after.
+
+export type FastenerKind = 'screw' | 'thumbscrew' | 'clip' | 'latch' | 'lever' | 'tab';
+
+export interface FastenerDef {
+  id: string;
+  kind: FastenerKind;
+  label: string;
+  /** Tool needed, shown to the trainee. */
+  tool?: string;
+  /** Spring-loaded: re-engages by itself when the part is pushed home. */
+  spring?: boolean;
+  /** false = does not stop the part coming out (e.g. the PSU cord bail only holds the cord). */
+  gatesRemoval?: boolean;
+  /** What you physically do to release / secure it. */
+  release: string;
+  secure: string;
+}
+
+export type FastenerGroup = ComponentKind | 'lid' | 'riser' | 'chassis' | 'heatsink';
+
+export const FASTENERS: Partial<Record<FastenerGroup, FastenerDef[]>> = {
+  psu: [
+    { id: 'bail', kind: 'clip', label: 'Cord retention bail', gatesRemoval: false, release: 'Flip the wire bail off the power plug', secure: 'Snap the wire bail over the power plug' },
+    { id: 'tab', kind: 'tab', label: 'Green release tab', spring: true, release: 'Press and hold the green release tab', secure: 'Let go of the release tab' },
+  ],
+  fan: [{ id: 'latch', kind: 'latch', label: 'Orange finger latch', spring: true, release: 'Squeeze the orange finger latch', secure: 'Let go of the finger latch' }],
+  nic: [{ id: 'thumb', kind: 'thumbscrew', label: 'Captive thumbscrew', release: 'Unscrew the captive thumbscrew (counter-clockwise)', secure: 'Finger-tighten the captive thumbscrew' }],
+  gpu: [{ id: 'bracket', kind: 'screw', label: 'PCIe bracket screw', tool: '#2 Phillips', release: 'Remove the PCIe bracket screw', secure: 'Drive in the PCIe bracket screw' }],
+  m2: [{ id: 'screw', kind: 'screw', label: 'M.2 retention screw', tool: '#1 Phillips', release: 'Remove the M.2 retention screw (the drive pops up at an angle)', secure: 'Press the drive flat and drive in the retention screw' }],
+  cmos: [{ id: 'clip', kind: 'clip', label: 'Battery retention clip', spring: true, release: 'Push the retention clip aside with a plastic spudger', secure: 'Let the clip snap over the cell' }],
+  cpu: [{ id: 'frame', kind: 'lever', label: 'Socket load-frame lever', release: 'Unhook the load lever and swing the frame open', secure: 'Close the frame and hook the load lever under its tab' }],
+  lid: [
+    { id: 'screw', kind: 'screw', label: 'Cover lock screw', tool: '#2 Phillips', release: 'Back out the cover lock screw', secure: 'Tighten the cover lock screw' },
+    { id: 'latch', kind: 'lever', label: 'Cover release latch', release: 'Lift the cover release latch (the lid slides back)', secure: 'Press the cover latch flat' },
+  ],
+  riser: [
+    { id: 'ts1', kind: 'thumbscrew', label: 'Rear thumbscrew', release: 'Loosen the rear riser thumbscrew', secure: 'Finger-tighten the rear riser thumbscrew' },
+    { id: 'ts2', kind: 'thumbscrew', label: 'Front thumbscrew', release: 'Loosen the front riser thumbscrew', secure: 'Finger-tighten the front riser thumbscrew' },
+  ],
+  chassis: [
+    { id: 'earL', kind: 'latch', label: 'Left rack-ear latch', spring: true, release: 'Lift the left rack-ear latch', secure: 'Push in until the left ear latch clicks' },
+    { id: 'earR', kind: 'latch', label: 'Right rack-ear latch', spring: true, release: 'Lift the right rack-ear latch', secure: 'Push in until the right ear latch clicks' },
+  ],
+  heatsink: [1, 2, 3, 4].map((n) => ({
+    id: `s${n}`,
+    kind: 'screw' as const,
+    label: `Heatsink screw ${n}`,
+    tool: 'T30 Torx (torque driver)',
+    release: `Loosen captive screw ${n}`,
+    secure: `Torque captive screw ${n}`,
+  })),
+};
+
+/** Which fastener group applies to a target ("PSU1", "lid", "riser2", "chassis", "heatsink:CPU0"). */
+export function fastenerGroup(modelId: string, target: string): FastenerGroup | null {
+  if (target === 'lid' || target === 'chassis') return target;
+  if (target === 'riser1' || target === 'riser2') return 'riser';
+  if (target.startsWith('heatsink:')) return 'heatsink';
+  const s = slotDef(modelId, target);
+  return s ? s.kind : null;
+}
+
+export function fastenersOf(modelId: string, target: string): FastenerDef[] {
+  const g = fastenerGroup(modelId, target);
+  return (g && FASTENERS[g]) || [];
+}
+
+/** What the part looks like and how it is held: shown in the inspector so a new tech learns to recognise it. */
+export const KIND_ANATOMY: Record<ComponentKind, string> = {
+  psu: 'CRPS power supply, 73.5 mm wide. Air flows front to back through the honeycomb grille. The C14 inlet takes a C13 cord with a wire retention bail; the green release tab sits beside the handle. Status LED: green = OK, amber = fault or no AC input.',
+  fan: 'Dual-rotor 60 mm hot-swap fan module. It plugs straight into a connector on the fan board; the orange finger latch holds it in. Orange touch points mean hot-swappable.',
+  hdd: '3.5" 7.2K SATA drive in a tool-less carrier. Press the release button and the handle swings open, which disconnects the drive from the backplane. Wait for the platters to spin down before you pull it.',
+  nvme: '2.5" U.2 NVMe SSD (15 mm) in a carrier. The release button opens the handle; the drive is hot-plug once the OS has stopped using it.',
+  dimm: 'DDR5 registered DIMM: 288 pins, with the key notch off-centre so it only fits one way. Ejector latches at both ends lock it into the slot.',
+  cpu: 'LGA CPU in a carrier. Pins live in the socket, not on the CPU, so never touch the socket. The load frame clamps it down; the gold triangle marks pin 1.',
+  heatsink: 'Copper-base heatsink with heat pipes. Four captive Torx screws are torqued in a cross pattern so the pressure on the CPU stays even.',
+  m2: 'M.2 22110 NVMe boot SSD on the motherboard, held flat by a single retention screw at the far end. It is half of the mirrored (md RAID1) boot pair.',
+  nic: 'OCP 3.0 SFF network card with two SFP28 cages. It slides in from the rear; a captive thumbscrew holds it and a pull tab pulls it out.',
+  gpu: 'Low-profile PCIe Gen4 x16 inference GPU on Riser 1. The bracket screw holds it to the riser cage, so pull the riser first, then the card.',
+  cmos: 'CR2032 3 V lithium coin cell under Riser 2. A spring clip holds it. Pulling it resets BIOS settings to defaults.',
+};

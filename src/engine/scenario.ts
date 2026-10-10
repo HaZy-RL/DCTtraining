@@ -18,6 +18,23 @@ export type ModuleId =
 export type ToolId = 'ticket' | 'terminal' | 'bmc' | 'assets' | 'parts' | 'notes' | 'floor' | 'cutsheet' | 'pdu';
 export type SceneId = 'rack' | 'floor' | 'rackbuild' | 'rj45' | 'fiber' | 'hazard' | 'triage' | 'quiz' | 'none';
 
+/** Where the coach points: a device/part in 3D (with the aisle you must stand in), or a tool panel. */
+export interface CoachTarget {
+  deviceId?: string;
+  rackId?: string;
+  /** Selection/highlight key: a slot id, "layer:lid", "heatsink:CPU0", "fastener:<target>:<id>", "cord:PSU1", "power", "chassis". */
+  sel?: string;
+  side?: 'front' | 'rear';
+  tool?: ToolId;
+}
+
+/** One physical/UI micro-action in the coach checklist. */
+export interface CoachLine {
+  text: string;
+  done: boolean;
+  target?: CoachTarget;
+}
+
 export interface Step {
   id: string;
   text: string;
@@ -30,6 +47,8 @@ export interface Step {
   /** "Don't break this" rule: shown with a shield and only scored once real progress is made. */
   guard?: boolean;
   done: (w: World) => boolean;
+  /** Hand-holding: the micro-actions that make up this step, computed from the live world. */
+  coach?: (w: World) => CoachLine[];
 }
 
 export interface ScenarioInstance {

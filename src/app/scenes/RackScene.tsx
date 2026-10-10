@@ -1,14 +1,23 @@
 import { OrbitControls } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitImpl } from 'three-stdlib';
 import { MODELS } from '../../engine/catalog';
-import type { PortRef } from '../../engine/types';
+import { isTight } from '../../engine/fasteners';
+import type { PortRef, Rack } from '../../engine/types';
+import { useCoach } from '../play/guide';
 import { useStore } from '../store';
-import { deviceOrigin, MAT, RACK_PITCH, rackX, uBaseY } from './three/common';
+import { canvasTex, deviceOrigin, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, uBaseY } from './three/common';
 import { Cables, DummyRack, RackFrame, SwitchMesh } from './three/RackParts';
 import { ServerMesh } from './three/ServerMesh';
+import { notifyWalker, walker, useWalker } from './three/walker';
+
+const EYE = 16.5; // 1.65 m
+const AISLE_Z = 8; // where you stand in front of / behind a rack
+const ROW_HALF = RACK_D / 2 + 0.05;
+const OPPOSITE_Z = ROW_HALF * 2 + 12; // the next row over, across a 1.2 m aisle
+const WALL_Z = OPPOSITE_Z - ROW_HALF - 0.7;
 
 function CameraRig({ goal }: { goal: { pos: THREE.Vector3; target: THREE.Vector3; key: string } }) {
   const { camera } = useThree();
@@ -28,29 +37,248 @@ function CameraRig({ goal }: { goal: { pos: THREE.Vector3; target: THREE.Vector3
   return null;
 }
 
-function Floor({ minX, maxX }: { minX: number; maxX: number }) {
-  const tiles = useMemo(() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 256;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#2b3139';
-    g.fillRect(0, 0, 256, 256);
-    g.strokeStyle = '#1b1f25';
-    g.lineWidth = 6;
-    g.strokeRect(0, 0, 256, 256);
-    g.fillStyle = '#20252c';
-    for (let x = 0; x < 16; x++) for (let y = 0; y < 16; y++) if ((x + y) % 2 === 0) g.fillRect(24 + x * 13, 24 + y * 13, 6, 6);
-    const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set((maxX - minX + 40) / 6, 8);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }, [minX, maxX]);
+function typingInField(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+}
+
+/** First-person walking: WASD/arrows to move, drag to look, Shift to run. Reports rack/aisle zones to the sim. */
+function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }: { racks: Rack[]; origin: number; rowMinX: number; rowMaxX: number; hallMinX: number; hallMaxX: number }) {
+  const { camera, gl } = useThree();
+  const keys = useRef(new Set<string>());
+  const lastNotify = useRef(0);
+  useEffect(() => {
+    const cam = camera as THREE.PerspectiveCamera;
+    cam.fov = 62;
+    cam.updateProjectionMatrix();
+    return () => {
+      cam.fov = 45;
+      cam.updateProjectionMatrix();
+    };
+  }, [camera]);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (typingInField()) return;
+      const k = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
+        keys.current.add(k);
+        if (k.startsWith('arrow')) e.preventDefault();
+      }
+    };
+    const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
+    const blur = () => keys.current.clear();
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    // drag to look
+    const el = gl.domElement;
+    let drag: { x: number; y: number; moved: number } | null = null;
+    const pd = (e: PointerEvent) => {
+      pointerGuard.dragged = false;
+      drag = { x: e.clientX, y: e.clientY, moved: 0 };
+    };
+    const pm = (e: PointerEvent) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+      drag.moved += Math.abs(dx) + Math.abs(dy);
+      if (drag.moved > 5) pointerGuard.dragged = true;
+      walker.yaw -= dx * 0.0045;
+      walker.pitch = Math.max(-1.2, Math.min(1.0, walker.pitch - dy * 0.0035));
+    };
+    const pu = () => {
+      drag = null;
+    };
+    const ctx = (e: Event) => e.preventDefault();
+    el.addEventListener('pointerdown', pd);
+    window.addEventListener('pointermove', pm);
+    window.addEventListener('pointerup', pu);
+    el.addEventListener('contextmenu', ctx);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+      el.removeEventListener('pointerdown', pd);
+      window.removeEventListener('pointermove', pm);
+      window.removeEventListener('pointerup', pu);
+      el.removeEventListener('contextmenu', ctx);
+      pointerGuard.dragged = false;
+    };
+  }, [gl]);
+
+  useFrame((_, dtRaw) => {
+    const dt = Math.min(dtRaw, 0.1);
+    const k = keys.current;
+    const turn = (k.has('q') || k.has('arrowleft') ? 1 : 0) - (k.has('e') || k.has('arrowright') ? 1 : 0);
+    walker.yaw += turn * dt * 1.8;
+    const fwd = (k.has('w') || k.has('arrowup') ? 1 : 0) - (k.has('s') || k.has('arrowdown') ? 1 : 0);
+    const strafe = (k.has('d') ? 1 : 0) - (k.has('a') ? 1 : 0);
+    const moving = fwd !== 0 || strafe !== 0;
+    if (moving) {
+      const speed = (k.has('shift') ? 30 : 15) * dt;
+      const sin = Math.sin(walker.yaw);
+      const cos = Math.cos(walker.yaw);
+      let nx = walker.x + (-sin * fwd + cos * strafe) * speed;
+      let nz = walker.z + (-cos * fwd - sin * strafe) * speed;
+      nx = Math.max(hallMinX, Math.min(hallMaxX, nx));
+      nz = Math.max(-WALL_Z, Math.min(WALL_Z, nz));
+      // the row of racks is solid: slide along it instead of walking through
+      const r = 0.7;
+      if (nx > rowMinX - r && nx < rowMaxX + r && Math.abs(nz) < ROW_HALF + r) {
+        const penX = Math.min(nx - (rowMinX - r), rowMaxX + r - nx);
+        const penZ = ROW_HALF + r - Math.abs(nz);
+        if (penZ < penX) nz = Math.sign(walker.z || nz || 1) * (ROW_HALF + r);
+        else nx = nx - (rowMinX - r) < rowMaxX + r - nx ? rowMinX - r : rowMaxX + r;
+      }
+      walker.x = nx;
+      walker.z = nz;
+    }
+    camera.position.set(walker.x, EYE + (moving ? Math.sin(performance.now() / 120) * 0.08 : 0), walker.z);
+    camera.rotation.set(walker.pitch, walker.yaw, 0, 'YXZ');
+    // which rack face am I standing at?
+    let zone = `aisle:${walker.z >= 0 ? 'front' : 'rear'}`;
+    for (const rk of racks) {
+      const rx = rackX(rk, origin);
+      if (Math.abs(walker.x - rx) <= RACK_W / 2 + 0.4 && Math.abs(walker.z) >= ROW_HALF && Math.abs(walker.z) <= ROW_HALF + 6) {
+        zone = `${rk.id}:${walker.z >= 0 ? 'front' : 'rear'}`;
+        break;
+      }
+    }
+    if (zone !== walker.zone) {
+      walker.zone = zone;
+      const [to, side] = zone.split(':') as [string, 'front' | 'rear'];
+      const st = useStore.getState();
+      if (st.world && (st.world.trainee.location !== to || st.world.trainee.side !== side)) st.dispatch({ type: 'arrive', to, side });
+    }
+    const now = performance.now();
+    if (now - lastNotify.current > 150) {
+      lastNotify.current = now;
+      notifyWalker();
+    }
+  });
+  return null;
+}
+
+/** You, seen from the orbit camera. */
+function Avatar() {
+  const wk = useWalker();
+  if (!wk.init) return null;
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[(minX + maxX) / 2, 0, 6]} receiveShadow>
-      <planeGeometry args={[maxX - minX + 40, 48]} />
-      <meshStandardMaterial map={tiles} roughness={0.95} metalness={0.05} />
-    </mesh>
+    <group position={[wk.x, 0, wk.z]} rotation={[0, wk.yaw, 0]}>
+      <mesh position={[0, 8.5, 0]} castShadow>
+        <capsuleGeometry args={[1.5, 9, 6, 12]} />
+        <meshStandardMaterial color="#2bb3a3" roughness={0.6} />
+      </mesh>
+      <mesh position={[0, 16, 0]} castShadow>
+        <sphereGeometry args={[1.3, 16, 12]} />
+        <meshStandardMaterial color="#f2c9a0" roughness={0.7} />
+      </mesh>
+      {/* hard-hat-ish cap + badge so you can tell which way you face */}
+      <mesh position={[0, 16.9, -0.4]}>
+        <sphereGeometry args={[1.35, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial color="#ffd166" roughness={0.5} />
+      </mesh>
+      <mesh position={[0, 11.5, -1.55]}>
+        <boxGeometry args={[0.9, 1.2, 0.1]} />
+        <meshStandardMaterial color="#ffffff" />
+      </mesh>
+      <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[2.2, 2.6, 32]} />
+        <meshBasicMaterial color="#2bb3a3" toneMapped={false} />
+      </mesh>
+    </group>
+  );
+}
+
+function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; minP: number; maxP: number; origin: number }) {
+  const tiles = useMemo(
+    () =>
+      canvasTex(
+        `floor`,
+        256,
+        256,
+        (g) => {
+          g.fillStyle = '#c3c9d0';
+          g.fillRect(0, 0, 256, 256);
+          g.strokeStyle = '#9aa3ad';
+          g.lineWidth = 5;
+          g.strokeRect(0, 0, 256, 256);
+          g.fillStyle = '#b3bac2';
+          for (let x = 0; x < 16; x++) for (let y = 0; y < 16; y++) if ((x + y) % 2 === 0) g.fillRect(24 + x * 13, 24 + y * 13, 5, 5);
+        },
+        [1, 1],
+      ),
+    [],
+  );
+  const tex = useMemo(() => {
+    const t = tiles.clone();
+    t.needsUpdate = true;
+    t.repeat.set((maxX - minX + 60) / 6, (WALL_Z * 2 + 24) / 6);
+    return t;
+  }, [tiles, minX, maxX]);
+  const dummyRow = [];
+  for (let p = minP - 4; p <= maxP + 4; p++) dummyRow.push(p);
+  const midX = (minX + maxX) / 2;
+  const len = maxX - minX + 60;
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[midX, 0, 0]} receiveShadow>
+        <planeGeometry args={[len, WALL_Z * 2 + 24]} />
+        <meshStandardMaterial map={tex} roughness={0.9} metalness={0.05} />
+      </mesh>
+      {/* yellow safety lines along the aisles */}
+      {[ROW_HALF + 0.6, -(ROW_HALF + 0.6)].map((z) => (
+        <mesh key={z} rotation={[-Math.PI / 2, 0, 0]} position={[midX, 0.02, z]}>
+          <planeGeometry args={[len, 0.12]} />
+          <meshBasicMaterial color="#f2c230" />
+        </mesh>
+      ))}
+      {/* ceiling with light panels */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[midX, 31, 0]}>
+        <planeGeometry args={[len, WALL_Z * 2 + 24]} />
+        <meshStandardMaterial color="#eef1f4" roughness={1} />
+      </mesh>
+      {Array.from({ length: Math.ceil(len / 12) }, (_, i) =>
+        [-OPPOSITE_Z / 2 - 3, OPPOSITE_Z / 2 + 3].map((z) => (
+          <mesh key={`${i}${z}`} position={[midX - len / 2 + 6 + i * 12, 30.9, z]} rotation={[Math.PI / 2, 0, 0]}>
+            <planeGeometry args={[7, 1.4]} />
+            <meshBasicMaterial color="#ffffff" toneMapped={false} />
+          </mesh>
+        )),
+      )}
+      {/* neighbouring rows across the cold and hot aisles */}
+      {dummyRow.map((p) => (
+        <group key={p}>
+          <DummyRack x={(p - origin) * RACK_PITCH} z={OPPOSITE_Z} flip />
+          <DummyRack x={(p - origin) * RACK_PITCH} z={-OPPOSITE_Z} flip />
+        </group>
+      ))}
+      {/* aisle signs */}
+      {[
+        { z: WALL_Z * 0.5, text: '❄ COLD AISLE · FRONT OF RACKS', bg: '#2f7de1' },
+        { z: -WALL_Z * 0.5, text: '🔥 HOT AISLE · REAR OF RACKS', bg: '#e1442f' },
+      ].map((s) => (
+        <mesh key={s.z} position={[midX, 26, s.z]}>
+          <planeGeometry args={[9, 1.1]} />
+          <meshBasicMaterial
+            map={canvasTex(`sign${s.text}`, 512, 64, (g) => {
+              g.fillStyle = s.bg;
+              g.fillRect(0, 0, 512, 64);
+              g.fillStyle = '#fff';
+              g.font = 'bold 30px system-ui, sans-serif';
+              g.textAlign = 'center';
+              g.textBaseline = 'middle';
+              g.fillText(s.text, 256, 34);
+            })}
+            side={THREE.DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
   );
 }
 
@@ -60,8 +288,10 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   const sel = useStore((s) => s.sel);
   const view = useStore((s) => s.view);
   const mode = useStore((s) => s.mode);
+  const camMode = useStore((s) => s.camMode);
   const pendingPort = useStore((s) => s.pendingPort);
   const quality = useStore((s) => s.progress.settings.quality);
+  const coach = useCoach();
 
   const focusRackId = sel.rackId ?? inst.focusRackId ?? (w.trainee.location && w.racks[w.trainee.location] ? w.trainee.location : Object.keys(w.racks)[0]);
   const focusRack = w.racks[focusRackId] ?? Object.values(w.racks)[0];
@@ -74,14 +304,44 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   const maxP = Math.max(...positions) + 3;
   const dummies: number[] = [];
   for (let p = minP; p <= maxP; p++) if (!positions.includes(p)) dummies.push(p);
+  const rowMinX = (minP - origin) * RACK_PITCH - RACK_W / 2;
+  const rowMaxX = (maxP - origin) * RACK_PITCH + RACK_W / 2;
 
   const devices = useMemo(() => Object.values(w.devices).filter((d) => d.rackId && rackIds.has(d.rackId)), [w.devices, rackIds]);
   const cablesSig = useMemo(() => Object.values(w.cables).map((c) => `${c.a?.port}${c.b?.port}${c.condition}`).join() + devices.map((d) => d.power + d.os).join(), [w.cables, devices]);
 
+  // Put the walker where the sim says you are (start of scenario, "Walk here" buttons, aisle switches).
+  const loc = w.trainee.location;
+  const side = w.trainee.side;
+  useEffect(() => {
+    const key = `${loc}:${side}`;
+    const r = loc ? w.racks[loc] : undefined;
+    if (walker.init && walker.zone === key) return;
+    if (r && rackIds.has(r.id)) {
+      walker.x = rackX(r, origin);
+      walker.z = side === 'rear' ? -AISLE_Z : AISLE_Z;
+      walker.yaw = side === 'rear' ? Math.PI : 0;
+      walker.pitch = -0.12;
+      walker.zone = key;
+      walker.init = true;
+    } else if (!walker.init || (loc !== 'aisle' && !r)) {
+      // Start of shift, or you went to the desk/cage: you come back in through the door at the end of the cold aisle.
+      walker.x = rowMaxX + 8;
+      walker.z = WALL_Z - 2;
+      walker.yaw = Math.PI / 2 - 0.3;
+      walker.pitch = -0.1;
+      walker.zone = 'aisle:front';
+      walker.init = true;
+    }
+    notifyWalker();
+  }, [loc, side, origin, rackIds]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const store = useStore.getState;
-  const onRack = useCallback((id: string) => store().select({ rackId: id }), [store]);
+  const guard = () => pointerGuard.dragged;
+  const onRack = useCallback((id: string) => !guard() && store().select({ rackId: id }), [store]);
   const onDevice = useCallback(
     (id: string) => {
+      if (guard()) return;
       const d = store().world!.devices[id];
       store().select({ deviceId: id, rackId: d.rackId ?? undefined });
     },
@@ -89,6 +349,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   );
   const onSlot = useCallback(
     (id: string, slot: string) => {
+      if (guard()) return;
       const d = store().world!.devices[id];
       store().select({ deviceId: id, slot, rackId: d.rackId ?? undefined });
       const def = MODELS[d.model].slots.find((s) => s.id === slot);
@@ -97,8 +358,30 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     },
     [store],
   );
+  const onFastener = useCallback(
+    (id: string, target: string, fid: string) => {
+      if (guard()) return;
+      const st = store();
+      const d = st.world!.devices[id];
+      const parent = target === 'chassis' ? undefined : target === 'lid' || target === 'riser1' || target === 'riser2' ? `layer:${target}` : target;
+      st.select({ deviceId: id, slot: parent, rackId: d.rackId ?? undefined });
+      st.dispatch({ type: 'fastener', deviceId: id, target, id: fid, secure: !isTight(d, target, fid) });
+    },
+    [store],
+  );
+  const onLatch = useCallback(
+    (id: string, slot: string) => {
+      if (guard()) return;
+      const st = store();
+      const d = st.world!.devices[id];
+      st.select({ deviceId: id, slot, rackId: d.rackId ?? undefined });
+      st.dispatch({ type: 'latch', deviceId: id, slot, state: d.latches[slot] === 'open' ? 'closed' : 'open' });
+    },
+    [store],
+  );
   const onPort = useCallback(
     (id: string, port: string) => {
+      if (guard()) return;
       const st = store();
       const p: PortRef = { deviceId: id, port };
       const pend = st.pendingPort;
@@ -112,34 +395,47 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     },
     [store],
   );
-  const onCable = useCallback((id: string) => store().select({ cableId: id, rackId: store().sel.rackId }), [store]);
-  const onU = useCallback((u: number) => store().select({ rackId: focusRack.id, u }), [store, focusRack.id]);
+  const onCable = useCallback((id: string) => !guard() && store().select({ cableId: id, rackId: store().sel.rackId }), [store]);
+  const onU = useCallback((u: number) => !guard() && store().select({ rackId: focusRack.id, u }), [store, focusRack.id]);
 
-  // camera goal
+  // camera goal (inspect mode)
   const goal = useMemo(() => {
     const rx = rackX(focusRack, origin);
     const rear = view === 'rear';
     const dz = rear ? -1 : 1;
     const dev = sel.deviceId ? w.devices[sel.deviceId] : undefined;
+    const k = `${camMode}`;
     if (dev?.rackId && rackIds.has(dev.rackId)) {
       const o = deviceOrigin(dev, rackX(w.racks[dev.rackId], origin));
+      // Panels cover the left of the screen, so aim a little to the left of the part: it lands right of centre.
+      const left = new THREE.Vector3(rear ? 1.3 : -1.3, 0, 0);
+      const lay = sel.slot ? MODELS[dev.model].layout[sel.slot] : undefined;
       if (dev.servicePosition && !rear) {
-        const t = o.clone().add(new THREE.Vector3(0, 0.4, 0.3));
-        return { target: t, pos: t.clone().add(new THREE.Vector3(0.6, 7.5, 6.5)), key: `${dev.id}-svc-${view}` };
+        const t = o.clone().add(new THREE.Vector3(0, 0.4, 0.3)).add(left);
+        return { target: t, pos: t.clone().add(new THREE.Vector3(0.6, 7.5, 6.5)), key: `${dev.id}-svc-${view}${k}` };
       }
-      const t = o.clone().add(new THREE.Vector3(0, 0.4, rear ? -3.4 : 3.6));
-      return { target: t, pos: t.clone().add(new THREE.Vector3(1.6, 1.8, 6.5 * dz)), key: `${dev.id}-${view}` };
+      const t = o.clone().add(new THREE.Vector3(lay && !dev.servicePosition ? lay.x : 0, 0.4, rear ? -3.4 : 3.6)).add(left);
+      return { target: t, pos: t.clone().add(new THREE.Vector3(rear ? -1.2 : 1.2, 1.6, 6.2 * dz)), key: `${dev.id}-${view}${k}-${lay ? sel.slot : ''}` };
     }
     if (sel.u) {
       const t = new THREE.Vector3(rx, uBaseY(sel.u), 4.9);
-      return { target: t, pos: t.clone().add(new THREE.Vector3(2, 1.5, 7)), key: `u${sel.u}` };
+      return { target: t, pos: t.clone().add(new THREE.Vector3(2, 1.5, 7)), key: `u${sel.u}${k}` };
     }
     const t = new THREE.Vector3(rx, 9.5, 0);
-    return { target: t, pos: new THREE.Vector3(rx + 3, 11, 24 * dz), key: `${focusRack.id}-${view}` };
-  }, [sel.deviceId, sel.u, focusRack, origin, view, w.devices, w.racks, rackIds]);
+    return { target: t, pos: new THREE.Vector3(rx + 3, 11, 24 * dz), key: `${focusRack.id}-${view}${k}` };
+  }, [sel.deviceId, sel.slot, sel.u, focusRack, origin, view, w.devices, w.racks, rackIds, camMode]);
 
   const hl = mode === 'learn' && typeof w.meta.hlDevice === 'string' ? { dev: w.meta.hlDevice as string, slot: w.meta.hlSlot as string } : null;
   const xs = racks.map((r) => rackX(r, origin));
+  // Coach marker: what to touch next (learn mode, or practice after "Show me how")
+  const gt = coach.visible ? coach.current?.target : undefined;
+  const guideDev = gt?.deviceId && w.devices[gt.deviceId]?.rackId && rackIds.has(w.devices[gt.deviceId].rackId!) ? w.devices[gt.deviceId] : undefined;
+  const beacon = useMemo(() => {
+    if (!guideDev) return null;
+    const o = deviceOrigin(guideDev, rackX(w.racks[guideDev.rackId!], origin));
+    const rear = gt?.side === 'rear';
+    return o.add(new THREE.Vector3(0, 0.9, rear ? -4.3 : guideDev.servicePosition ? 0 : 4.3));
+  }, [guideDev, gt?.side, origin, w.racks]);
 
   return (
     <Canvas
@@ -147,21 +443,22 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       dpr={quality === 'high' ? [1, 2] : 1}
       camera={{ position: [3, 11, 24], fov: 45, near: 0.1, far: 400 }}
       onPointerMissed={() => {
+        if (pointerGuard.dragged) return;
         const st = store();
         if (st.sel.slot || st.sel.cableId) st.select({ deviceId: st.sel.deviceId, rackId: st.sel.rackId });
       }}
       gl={{ antialias: quality === 'high' }}
     >
-      <color attach="background" args={['#0a0e13']} />
-      <fog attach="fog" args={['#0a0e13', 40, 120]} />
-      <ambientLight intensity={0.45} />
-      <hemisphereLight args={['#cfe3ff', '#1a1f26', 0.5]} />
+      <color attach="background" args={['#dfe6ec']} />
+      <fog attach="fog" args={['#dfe6ec', 70, 190]} />
+      <ambientLight intensity={0.75} />
+      <hemisphereLight args={['#ffffff', '#9aa3ad', 0.7]} />
       <directionalLight position={[10, 30, 20]} intensity={1.1} castShadow={quality === 'high'} />
-      <directionalLight position={[-10, 20, -20]} intensity={0.6} />
+      <directionalLight position={[-10, 20, -20]} intensity={0.7} />
       {xs.map((x) => (
-        <pointLight key={x} position={[x, 22, 10]} intensity={30} distance={30} color="#e6f0ff" />
+        <pointLight key={x} position={[x, 24, 10]} intensity={30} distance={30} color="#f4f8ff" />
       ))}
-      <Floor minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} />
+      <Hall minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} minP={minP} maxP={maxP} origin={origin} />
       {/* overhead cable trays */}
       <mesh position={[((minP + maxP) / 2 - origin) * RACK_PITCH, 21.8, -3]} material={MAT.post}>
         <boxGeometry args={[(maxP - minP + 1) * RACK_PITCH, 0.15, 1.5]} />
@@ -186,28 +483,33 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
               dev={d}
               rack={r}
               x={x}
+              lod={r.id === focusRack.id || r.id === w.trainee.location ? 'full' : 'low'}
               detail={sel.deviceId === d.id}
               selected={sel.deviceId === d.id}
               selSlot={sel.deviceId === d.id ? sel.slot : undefined}
               highlightSlot={hl && hl.dev === d.id ? hl.slot : undefined}
+              guide={guideDev?.id === d.id ? gt?.sel : undefined}
               pendingPort={pendingPort?.deviceId === d.id ? pendingPort.port : null}
               onDevice={onDevice}
               onSlot={onSlot}
               onPort={onPort}
+              onFastener={onFastener}
+              onLatch={onLatch}
             />
           );
         return <SwitchMesh key={d.id} dev={d} x={x} selected={sel.deviceId === d.id} pendingPort={pendingPort?.deviceId === d.id ? pendingPort.port : null} onDevice={onDevice} onPort={onPort} cablesSig={cablesSig} />;
       })}
       <Cables w={w} originPos={origin} rackIds={rackIds} selCable={sel.cableId} onCable={onCable} />
-      {/* trainee marker */}
-      {w.trainee.location && w.racks[w.trainee.location] && rackIds.has(w.trainee.location) && (
-        <mesh position={[rackX(w.racks[w.trainee.location], origin), 0.05, view === 'rear' ? -7.5 : 7.5]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[0.6, 0.85, 32]} />
-          <meshBasicMaterial color="#4fd1c5" toneMapped={false} />
-        </mesh>
+      {beacon && <GuideBeacon position={beacon} />}
+      {camMode === 'inspect' && !sel.deviceId && <Avatar />}
+      {camMode === 'inspect' ? (
+        <>
+          <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI * 0.49} minDistance={2} maxDistance={70} />
+          <CameraRig goal={goal} />
+        </>
+      ) : (
+        <WalkController racks={racks} origin={origin} rowMinX={rowMinX} rowMaxX={rowMaxX} hallMinX={rowMinX - 26} hallMaxX={rowMaxX + 26} />
       )}
-      <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI * 0.49} minDistance={2} maxDistance={70} />
-      <CameraRig goal={goal} />
     </Canvas>
   );
 }

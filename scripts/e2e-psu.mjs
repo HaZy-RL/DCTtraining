@@ -42,8 +42,12 @@ try {
   await page.locator('.inspector select').last().selectOption(info.slot);
   await page.waitForTimeout(1500);
   await shot('30-psu-selected');
+  // From the rear: flip the cord bail, unplug, press the release tab, pull
+  await click(/Bail on · flip off/);
   await click('Unplug');
-  await click(/release tab & pull PSU/);
+  await page.locator('.inspector .fastener', { hasText: 'Green release tab' }).getByRole('button', { name: 'Release' }).click();
+  await page.waitForTimeout(250);
+  await click(/Pull PSU out/);
   // install the matching spare
   const row = page.locator('.inspector .row', { hasText: info.pn }).first();
   await row.getByRole('button', { name: 'Install' }).click();
@@ -54,6 +58,7 @@ try {
   const opt = await sel.locator('option', { hasText: `PDU-${side}` }).first().getAttribute('value');
   await sel.selectOption(opt);
   await click('Plug in');
+  await click(/Bail OFF · snap on/);
   await page.waitForTimeout(800);
   await shot('31-psu-replaced');
   // verify via BMC, clear SEL, bag/tag/RMA, worklog, resolve
@@ -90,7 +95,11 @@ try {
     A({ type: 'walk', to: d.rackId });
     A({ type: 'scanAsset', deviceId: id });
     A({ type: 'esd', on: true });
+    A({ type: 'fastener', deviceId: id, target: 'chassis', id: 'earL', secure: false });
+    A({ type: 'fastener', deviceId: id, target: 'chassis', id: 'earR', secure: false });
     A({ type: 'servicePosition', deviceId: id, out: true });
+    A({ type: 'fastener', deviceId: id, target: 'lid', id: 'screw', secure: false });
+    A({ type: 'fastener', deviceId: id, target: 'lid', id: 'latch', secure: false });
     A({ type: 'layer', deviceId: id, layer: 'lid', install: false });
     st.setPanel(null);
     st.select({ deviceId: id, rackId: d.rackId });
@@ -103,6 +112,25 @@ try {
   });
   await page.waitForTimeout(1200);
   await shot('35-interior-dimms');
+  // CPU heatsink screws close-up
+  await S(() => {
+    const st = window.__DCT__.getState();
+    st.select({ deviceId: st.inst.focusDeviceId, slot: 'heatsink:CPU0', rackId: st.world.devices[st.inst.focusDeviceId].rackId });
+  });
+  await page.waitForTimeout(1200);
+  await shot('36-heatsink');
+  // Walk mode
+  await click(/Walk mode/);
+  await page.keyboard.down('w');
+  await page.waitForTimeout(600);
+  await page.keyboard.up('w');
+  await page.waitForTimeout(400);
+  await shot('37-walk-mode');
+  // Main menu (bright theme)
+  await S(() => window.__DCT__.getState().quit());
+  await S(() => window.__DCT__.getState().go({ name: 'menu' }));
+  await page.waitForTimeout(600);
+  await shot('38-menu');
 } catch (e) {
   errors.push('SCRIPT: ' + e.message);
   await shot('98-e2e-failure').catch(() => {});

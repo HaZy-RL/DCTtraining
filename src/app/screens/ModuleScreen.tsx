@@ -2,11 +2,12 @@ import { useState } from 'react';
 import { MODULES, scenariosFor } from '../../content';
 import type { Mode } from '../../engine/scenario';
 import { TopNav } from '../App';
+import { starsFor } from '../progress';
 import { useStore } from '../store';
 
 const MODE_INFO: Record<Mode, string> = {
-  learn: 'Step-by-step guidance with the "why" behind every step. No timer.',
-  practice: 'Objectives listed, hints on request. No timer.',
+  learn: 'A coach walks you through every physical step (which clip, which screw, which aisle) with a glowing marker and the "why". No timer.',
+  practice: 'Objectives listed. Stuck? "Show me how" reveals the step-by-step checklist for one objective (counts as a hint). No timer.',
   challenge: 'Timed and randomized. Objectives only, no hints. Scored for a medal.',
 };
 
@@ -54,7 +55,14 @@ export function ModuleScreen({ moduleId }: { moduleId: string }) {
                       <span className="dim">{'●'.repeat(5 - s.difficulty)}</span>
                     </span>
                     <span className="tag">~{s.minutes} min</span>
-                    {p?.bestRating && <span className={`medal ${p.bestRating}`}>{p.bestRating === 'Incomplete' ? '—' : `★ ${p.bestRating}`} {p.bestPct}%</span>}
+                    <span className="stars" title={p?.bestRating ? `Best: ${p.bestRating} ${p.bestPct}%` : 'Not played yet'}>
+                      {[1, 2, 3].map((n) => (
+                        <span key={n} className={n <= starsFor(p) ? 'on' : ''}>
+                          ★
+                        </span>
+                      ))}
+                    </span>
+                    {p?.bestRating && <span className={`medal ${p.bestRating}`}>{p.bestRating === 'Incomplete' ? '—' : p.bestRating} {p.bestPct}%</span>}
                   </div>
                   <p className="muted" style={{ margin: '6px 0' }}>
                     {s.summary}

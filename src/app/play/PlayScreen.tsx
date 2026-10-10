@@ -74,9 +74,11 @@ function TopBar() {
       {mode === 'practice' && (
         <button
           className="btn sm"
+          title="Reveal the step-by-step checklist for your current objective"
           onClick={() => {
-            useHint();
-            const next = inst.steps.find((s, i) => !r.steps[i].done && s.required);
+            const next = inst.steps.find((s, i) => !r.steps[i].done && s.required && !s.guard);
+            if (next) useStore.getState().revealCoach(next.id);
+            else useHint();
             useStore.setState((st) => {
               if (!st.world) return {};
               const w = { ...st.world, toasts: [...st.world.toasts, { id: st.world.toastSeq + 1, t: st.world.t, kind: 'info' as const, text: `💡 ${next ? next.hint ?? next.why ?? next.text : 'All required steps done. Finish!'}` }], toastSeq: st.world.toastSeq + 1 };
@@ -164,9 +166,11 @@ function Briefing() {
           <b>How this works</b>
           <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
             <li>Tools are on the left: tickets, terminal (jump host), BMC web UI, CMDB, parts and notes.</li>
-            <li>In the 3D view, click a rack to walk to it and click a server or part to inspect and act on it. Toggle Front/Rear.</li>
+            <li>In the 3D view, click a server or part to inspect it. Press <b>🚶 Walk mode</b> (or V) to walk the hall yourself with WASD.</li>
+            <li>Front and rear are different places: the cold aisle (front: drives, power button, slide-out rails) and the hot aisle (rear: PSUs, cords, network). Walking round costs time.</li>
+            <li>Parts are physically held in: clips, latches, thumbscrews and screws. Click each one (in 3D or in the inspector) to release it, and secure it again when you're done.</li>
             <li>The clock is simulated. Long waits (POST, drains, deliveries) can be skipped with ⏩ Wait.</li>
-            <li>Every action is graded, including safety and process. {mode === 'learn' ? 'Learn mode shows the next step and why it matters.' : mode === 'practice' ? 'Use 💡 Hint if you get stuck.' : 'Challenge mode is timed, with no hints.'}</li>
+            <li>Every action is graded, including safety and process. {mode === 'learn' ? 'Learn mode coaches you through every physical step, with a glowing marker on what to touch next.' : mode === 'practice' ? 'Stuck? "💡 Show me how" on an objective gives you its step-by-step checklist and a 3D marker (counts as a hint).' : 'Challenge mode is timed, with no hints.'}</li>
           </ul>
         </div>
         <div className="row" style={{ marginTop: 14 }}>

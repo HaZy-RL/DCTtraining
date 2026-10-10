@@ -1,6 +1,7 @@
 // Mutation helpers + time/power state machine. All functions mutate a draft World (use with immer).
 import { MODELS, partSpec } from './catalog';
 import { makeComponent } from './factory';
+import { heatsinkTorqued } from './fasteners';
 import { Rng } from './rng';
 import { cpuTemp, goodPsuCount, hasAC, installedOfKind } from './projectors';
 import type { Device, PendingEvent, SelEntry, Ticket, World } from './types';
@@ -129,6 +130,12 @@ export function powerOn(w: World, dev: Device, via: string): string {
     addSel(w, dev, 'Processor', 'CPU Thermal Trip — Asserted', 'critical');
     dev.power = 'standby';
     return 'System powers on and immediately shuts off — CPU thermal trip. (Heatsink missing!)';
+  }
+  if (Object.entries(dev.heatsinks).some(([cpu, on]) => on && dev.slots[cpu] && !heatsinkTorqued(dev, cpu))) {
+    dev.quirks.push('post_halt:CPU thermal trip (heatsink not torqued down)');
+    addSel(w, dev, 'Processor', 'CPU Thermal Trip — Asserted', 'critical');
+    dev.power = 'standby';
+    return 'System powers on and shuts off seconds later — CPU thermal trip. (A heatsink is sitting loose: torque its screws!)';
   }
   if (cpus.length === 2 && cpus[0][1].partNumber !== cpus[1][1].partNumber) {
     dev.quirks.push('post_halt:Processor mismatch');
