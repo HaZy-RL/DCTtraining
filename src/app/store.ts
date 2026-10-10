@@ -60,6 +60,10 @@ interface State {
   camMode: 'inspect' | 'walk';
   /** Practice mode: steps whose coach checklist the trainee asked to see (costs a hint). */
   coachRevealed: Record<string, true>;
+  /** Holding the handheld barcode scanner: the next click on an asset-tag sticker scans it. */
+  scanner: boolean;
+  /** Last scan beam flash (for the 3D laser effect). */
+  scanFx: { deviceId: string; at: number } | null;
 
   go: (s: Screen) => void;
   start: (defId: string, mode: Mode, seed?: number) => void;
@@ -75,6 +79,9 @@ interface State {
   goAisle: (v: 'front' | 'rear') => void;
   setCamMode: (m: 'inspect' | 'walk') => void;
   revealCoach: (stepId: string) => void;
+  setScanner: (on: boolean) => void;
+  /** Pull the trigger at a device's asset-tag sticker. */
+  scanTag: (deviceId: string) => void;
   select: (s: Selection) => void;
   setPendingPort: (p: PortRef | null) => void;
   setPaused: (p: boolean) => void;
@@ -106,6 +113,8 @@ export const useStore = create<State>((set, get) => ({
   shell: null,
   camMode: 'inspect',
   coachRevealed: {},
+  scanner: false,
+  scanFx: null,
 
   go: (screen) => {
     set({ screen });
@@ -147,6 +156,8 @@ export const useStore = create<State>((set, get) => ({
       shell,
       camMode: 'inspect',
       coachRevealed: {},
+      scanner: false,
+      scanFx: null,
       screen: { name: 'play' },
     });
     if (inst.startTool === 'terminal') set({ panel: null });
@@ -221,6 +232,17 @@ export const useStore = create<State>((set, get) => ({
     if (w && w.racks[w.trainee.location ?? ''] && w.trainee.side !== side) get().dispatch({ type: 'walk', to: w.trainee.location!, side });
   },
   setCamMode: (camMode) => set({ camMode }),
+  setScanner: (scanner) => {
+    set({ scanner });
+    document.body.style.cursor = '';
+  },
+  scanTag: (deviceId) => {
+    const r = get().dispatch({ type: 'scanAsset', deviceId });
+    if (r.ok) {
+      set({ scanFx: { deviceId, at: performance.now() } });
+      if (get().progress.settings.sound) sfx('beep');
+    }
+  },
   revealCoach: (stepId) => {
     if (get().coachRevealed[stepId]) return;
     set({ coachRevealed: { ...get().coachRevealed, [stepId]: true }, hintsUsed: get().hintsUsed + 1 });

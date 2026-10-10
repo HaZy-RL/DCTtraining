@@ -7,7 +7,7 @@ import { isTight } from '../../../engine/fasteners';
 import { cpuTemp, hasAC, healthLed, powerLed, slotLed } from '../../../engine/projectors';
 import type { Component, Device, Rack } from '../../../engine/types';
 import { useStore } from '../../store';
-import { CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, MAT, pcbTex, portLocal } from './common';
+import { barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
 
 export interface ServerMeshProps {
   dev: Device;
@@ -218,7 +218,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
             return (
               <group key={s.id}>
                 <Box l={{ ...l, y: 0.04, h: 0.06, w: 0.07 }} color={Number(s.label.slice(1)) % 2 ? '#e8e8e8' : '#111'} onClick={click(s.id)} emissive={glow(s.id)} />
-                {c && (
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={0.9}>
+                  {() => (
                   <mesh position={[l.x, 0.1 + lift + 0.15, l.z]} onClick={click(s.id)} {...hoverCursor()}>
                     <boxGeometry args={[l.w, 0.3, l.d]} />
                     <meshStandardMaterial attach="material-0" map={dimmTex()} emissive={glow(s.id) ?? '#000'} emissiveIntensity={0.6} />
@@ -228,7 +229,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                     <meshStandardMaterial attach="material-4" color="#0f5a32" />
                     <meshStandardMaterial attach="material-5" color="#0f5a32" />
                   </mesh>
-                )}
+                  )}
+                </SlideAnim>
                 {/* ejector latches: click either end */}
                 {[1, -1].map((end) => (
                   <mesh
@@ -260,7 +262,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
             return (
               <group key={s.id}>
                 <Box l={{ ...l, y: 0.04, h: 0.04, w: l.w + 0.1, d: l.d + 0.1 }} color="#3a3f46" onClick={click(s.id)} emissive={glow(s.id)} />
-                {c && (
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={0.8}>
+                  {() => (
                   <mesh position={[l.x, 0.105, l.z]} onClick={click(s.id)} {...hoverCursor()}>
                     <boxGeometry args={[l.w * 0.8, 0.05, l.d * 0.8]} />
                     <meshStandardMaterial attach="material-2" map={ihsTex()} metalness={0.7} roughness={0.3} emissive={glow(s.id) ?? '#000'} emissiveIntensity={0.5} />
@@ -268,7 +271,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                       <meshStandardMaterial key={i} attach={`material-${i}`} color="#aab2bb" metalness={0.8} roughness={0.3} />
                     ))}
                   </mesh>
-                )}
+                  )}
+                </SlideAnim>
                 {!hs && (
                   <>
                     {/* load frame + lever */}
@@ -290,7 +294,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                     {c && <Label text="◤ PIN 1" position={[l.x - l.w / 2 + 0.2, 0.135, l.z + l.d / 2 - 0.16]} rotation={[-Math.PI / 2, 0, 0]} size={[0.28, 0.08]} opts={{ bg: '#b9c0c8', fg: '#111', w: 128, h: 36 }} />}
                   </>
                 )}
-                {hs && (
+                <SlideAnim item={hs} dir={[0, 1, 0]} dist={1.4} speed={1.2}>
+                  {() => (
                   <group>
                     <Box l={{ x: l.x, y: 0.13, z: l.z, w: 1.0, h: 0.08, d: 1.05 }} mat={MAT.copper} onClick={click(hsT)} emissive={glow(hsT)} />
                     {Array.from({ length: 12 }, (_, i) => (
@@ -316,28 +321,32 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                     })}
                     {g(hsT) && <GuideGlow position={[l.x, 0.45, l.z]} size={[1.0, 0.65, 1.05]} />}
                   </group>
-                )}
+                  )}
+                </SlideAnim>
                 {g(s.id) && <GuideGlow position={[l.x, 0.12, l.z]} size={[l.w, 0.08, l.d]} />}
               </group>
             );
           }
           case 'fan': {
             const latchLoose = c && !isTight(dev, s.id, 'latch');
-            return c ? (
-              <group key={s.id} onClick={click(s.id)}>
-                <Fan l={l} spinning={running && c.health === 'ok'} failed={c.health === 'failed'} />
-                {glow(s.id) && <Box l={{ ...l, h: 0.04, y: l.h + 0.05 }} color="#1d6f8f" emissive={glow(s.id)} hover={false} />}
-                <mesh position={[l.x, l.h + 0.07 + (latchLoose ? 0.05 : 0), l.z - l.d * 0.2]} material={latchLoose ? screwLooseMat : MAT.orangeTouch} onClick={fclick(s.id, 'latch')} {...hoverCursor()}>
-                  <boxGeometry args={[l.w * 0.45, 0.05, 0.14]} />
-                </mesh>
-                <Led state={ac && c.health === 'failed' ? 'amber' : 'off'} position={[l.x + l.w / 2 - 0.06, l.h + 0.08, l.z]} size={0.025} />
-                {g(s.id) && <GuideGlow position={[l.x, l.y + l.h / 2, l.z]} size={[l.w, l.h, l.d]} />}
-                {g(`fastener:${s.id}:latch`) && <GuideGlow position={[l.x, l.h + 0.08, l.z - l.d * 0.2]} size={[l.w * 0.5, 0.08, 0.18]} />}
-              </group>
-            ) : (
+            return (
               <group key={s.id}>
                 <Box l={{ ...l, h: 0.04 }} color="#1a1d22" onClick={click(s.id)} emissive={glow(s.id)} />
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={1.2}>
+                  {(fc) => (
+                    <group onClick={click(s.id)}>
+                      <Fan l={l} spinning={running && fc.health === 'ok'} failed={fc.health === 'failed'} />
+                      {glow(s.id) && <Box l={{ ...l, h: 0.04, y: l.h + 0.05 }} color="#1d6f8f" emissive={glow(s.id)} hover={false} />}
+                      <mesh position={[l.x, l.h + 0.07 + (latchLoose ? 0.05 : 0), l.z - l.d * 0.2]} material={latchLoose ? screwLooseMat : MAT.orangeTouch} onClick={fclick(s.id, 'latch')} {...hoverCursor()}>
+                        <boxGeometry args={[l.w * 0.45, 0.05, 0.14]} />
+                      </mesh>
+                      <Label text="FAN-60X56-HP" position={[l.x, l.y + l.h + 0.002, l.z + 0.08]} rotation={[-Math.PI / 2, 0, 0]} size={[l.w * 0.8, 0.07]} opts={{ bg: '#1b1f25', fg: '#cbd5e0', w: 192, h: 24 }} />
+                      <Led state={ac && fc.health === 'failed' ? 'amber' : 'off'} position={[l.x + l.w / 2 - 0.06, l.h + 0.08, l.z]} size={0.025} />
+                    </group>
+                  )}
+                </SlideAnim>
                 {g(s.id) && <GuideGlow position={[l.x, l.y + l.h / 2, l.z]} size={[l.w, l.h, l.d]} />}
+                {g(`fastener:${s.id}:latch`) && <GuideGlow position={[l.x, l.h + 0.08, l.z - l.d * 0.2]} size={[l.w * 0.5, 0.08, 0.18]} />}
               </group>
             );
           }
@@ -348,7 +357,9 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                 <mesh position={[l.x, 0.06, l.z - 0.12]} material={blackPlastic} raycast={() => null}>
                   <boxGeometry args={[l.w + 0.04, 0.04, 0.06]} />
                 </mesh>
-                {c && (
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={0.6}>
+                  {() => (
+                  <group>
                   <group position={[l.x, 0.07, l.z]} rotation={[tight ? 0 : 0.18, 0, 0]}>
                     <mesh onClick={click(s.id)} {...hoverCursor()}>
                       <boxGeometry args={[l.w, 0.02, l.d]} />
@@ -361,9 +372,11 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                     ))}
                     <Label text="960G" position={[0, 0.035, 0.42]} rotation={[-Math.PI / 2, 0, 0]} size={[0.16, 0.06]} opts={{ bg: '#e9edf0', fg: '#111', w: 64, h: 24 }} />
                   </group>
-                )}
+                  <Screw pos={[l.x, 0.08, l.z + l.d / 2 - 0.03]} tight={tight} r={0.035} onClick={fclick(s.id, 'screw')} glow={g(`fastener:${s.id}:screw`)} />
+                  </group>
+                  )}
+                </SlideAnim>
                 {!c && <Box l={{ ...l, h: 0.02 }} color="#222" onClick={click(s.id)} emissive={glow(s.id)} />}
-                {c && <Screw pos={[l.x, 0.08, l.z + l.d / 2 - 0.03]} tight={tight} r={0.035} onClick={fclick(s.id, 'screw')} glow={g(`fastener:${s.id}:screw`)} />}
                 {g(s.id) && <GuideGlow position={[l.x, 0.08, l.z]} size={[l.w, 0.06, l.d]} />}
               </group>
             );
@@ -376,12 +389,14 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                 <mesh position={[l.x, 0.05, l.z]} material={blackPlastic} onClick={click(s.id)}>
                   <cylinderGeometry args={[0.125, 0.125, 0.02, 20]} />
                 </mesh>
-                {c && (
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={0.5}>
+                  {() => (
                   <mesh position={[l.x, 0.075 + (tight ? 0 : 0.03), l.z]} rotation={[tight ? 0 : 0.3, 0, 0]} onClick={click(s.id)} {...hoverCursor()}>
                     <cylinderGeometry args={[0.1, 0.1, 0.032, 24]} />
                     <meshStandardMaterial color="#cfd6dc" metalness={0.9} roughness={0.2} emissive={glow(s.id) ?? '#000'} emissiveIntensity={glow(s.id) ? 0.8 : 0} />
                   </mesh>
-                )}
+                  )}
+                </SlideAnim>
                 {c && (
                   <mesh position={[l.x + 0.11, 0.09, l.z]} rotation={[0, 0, tight ? 0 : 0.5]} onClick={fclick(s.id, 'clip')} {...hoverCursor()}>
                     <boxGeometry args={[0.03, 0.05, 0.08]} />
@@ -399,7 +414,9 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
             return (
               <group key={s.id}>
                 {/* the riser sits on the ESD mat once lifted out; the card is worked on there */}
-                {c ? (
+                {!c && <Box l={{ ...l, y: 0.05, h: 0.04, w: 0.2 }} color="#333" onClick={click(s.id)} emissive={glow(s.id)} />}
+                <SlideAnim item={c} dir={[0, 1, 0]} dist={1.0}>
+                  {() => (
                   <group>
                     <Box l={{ ...l, y: 0.12 }} color="#1f2a1f" onClick={click(s.id)} emissive={glow(s.id)} />
                     <mesh position={[l.x, 0.12 + l.h + 0.04, l.z + 0.1]} material={blackPlastic} raycast={() => null}>
@@ -411,9 +428,8 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
                     </mesh>
                     <Screw pos={[l.x + l.w / 2 - 0.08, 0.36, l.z - l.d / 2 - 0.02]} tight={tight} r={0.035} axis="-z" onClick={fclick(s.id, 'bracket')} glow={g(`fastener:${s.id}:bracket`)} />
                   </group>
-                ) : (
-                  <Box l={{ ...l, y: 0.05, h: 0.04, w: 0.2 }} color="#333" onClick={click(s.id)} emissive={glow(s.id)} />
-                )}
+                  )}
+                </SlideAnim>
                 {g(s.id) && <GuideGlow position={[l.x, 0.2, l.z]} size={[l.w, 0.2, l.d]} />}
               </group>
             );
@@ -424,11 +440,12 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
       })}
       {/* risers: metal cage, PCIe card inside, two blue thumbscrews on top */}
       {(['riser1', 'riser2'] as const).map((r) => {
-        if (!dev.layers[r]) return null;
         const rx = r === 'riser1' ? -0.55 : 0.6;
         const key = `layer:${r}`;
         return (
-          <group key={r}>
+          <SlideAnim key={r} item={dev.layers[r]} dir={[0, 1, 0]} dist={1.6} speed={1.3}>
+          {() => (
+          <group>
             <Box l={{ x: rx, y: 0.05, z: -2.85, w: 0.95, h: 0.72, d: 1.75 }} color="#59616c" opacity={0.6} onClick={click(key)} emissive={glow(key)} />
             {r === 'riser1' && dev.slots.PCIE1 && (
               <mesh position={[rx, 0.42, -2.85]} raycast={() => null}>
@@ -446,10 +463,13 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
             <Label text={r === 'riser1' ? 'RISER 1' : 'RISER 2'} position={[rx, 0.775, -2.85]} rotation={[-Math.PI / 2, 0, 0]} size={[0.45, 0.1]} opts={{ bg: '#59616c', fg: '#e9edf0', w: 160, h: 36 }} />
             {g(key) && <GuideGlow position={[rx, 0.42, -2.85]} size={[0.95, 0.72, 1.75]} />}
           </group>
+          )}
+          </SlideAnim>
         );
       })}
       {/* air shroud */}
-      {dev.layers.shroud && (
+      <SlideAnim item={dev.layers.shroud} dir={[0, 1, 0]} dist={1.8} speed={1.3}>
+        {() => (
         <group>
           <Box l={{ x: 0, y: 0.04, z: 0.6, w: 4.3, h: 0.72, d: 1.75 }} mat={MAT.plastic} onClick={click('layer:shroud')} emissive={glow('layer:shroud')} opacity={0.82} color="#0d0f12" />
           {[-1.6, -0.6, 0.6, 1.6].map((x) => (
@@ -460,8 +480,47 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
           <Label text="AIR SHROUD · DO NOT OPERATE WITHOUT" position={[0, 0.775, 1.2]} rotation={[-Math.PI / 2, 0, 0]} size={[1.6, 0.12]} opts={{ bg: '#0d0f12', fg: '#ffd166', w: 512, h: 40 }} />
           {g('layer:shroud') && <GuideGlow position={[0, 0.4, 0.6]} size={[4.3, 0.72, 1.75]} />}
         </group>
-      )}
+        )}
+      </SlideAnim>
       {running && cpuTemp(dev, 0) >= 85 && <pointLight position={[-1.1, 0.8, 0.6]} color="#ff4b2b" intensity={2} distance={2} />}
+    </group>
+  );
+}
+
+/** Barcode asset-tag sticker on the left rack ear. With the scanner in hand, clicking it scans it. */
+function AssetTag({ dev, glow }: { dev: Device; glow: boolean }) {
+  const scanAt = useStore((s) => (s.scanFx?.deviceId === dev.id ? s.scanFx.at : 0));
+  const scanner = useStore((s) => s.scanner);
+  const beam = useRef<THREE.Mesh>(null);
+  useFrame(() => {
+    if (!beam.current) return;
+    const age = performance.now() - scanAt;
+    beam.current.visible = age < 700;
+    if (age < 700) beam.current.position.y = 0.45 + Math.sin(age / 50) * 0.13;
+  });
+  return (
+    <group>
+      <mesh
+        position={[-2.12, 0.45, FZ + 0.066]}
+        onClick={handler(() => {
+          const st = useStore.getState();
+          if (st.scanner) st.scanTag(dev.id);
+          else st.select({ deviceId: dev.id, rackId: dev.rackId ?? undefined });
+        })}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = scanner ? 'crosshair' : 'pointer';
+        }}
+        onPointerOut={() => (document.body.style.cursor = '')}
+      >
+        <planeGeometry args={[0.18, 0.36]} />
+        <meshBasicMaterial map={barcodeTex(dev.assetTag)} toneMapped={false} />
+      </mesh>
+      <mesh ref={beam} position={[-2.12, 0.45, FZ + 0.07]} visible={false} raycast={() => null}>
+        <planeGeometry args={[0.24, 0.012]} />
+        <meshBasicMaterial color="#ff2a2a" toneMapped={false} />
+      </mesh>
+      {glow && <GuideGlow position={[-2.12, 0.45, FZ + 0.07]} size={[0.2, 0.38, 0.04]} />}
     </group>
   );
 }
@@ -482,21 +541,42 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
         const zFront = FZ + 0.01 + (c && !c.seated ? 0.25 : 0);
         return (
           <group key={s.id} onClick={handler(() => onSlot(s.id))}>
-            <mesh position={[l.x, l.y + l.h / 2, zFront - 0.02]}>
-              <boxGeometry args={[l.w * 0.96, l.h * 0.92, 0.06]} />
-              <meshStandardMaterial color={c ? '#3a414b' : '#0a0b0d'} map={c && lod === 'full' ? grilleTex('#3a414b', '#0b0d10') : null} emissive={selSlot === s.id ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.5} roughness={0.5} />
+            {/* empty bay: dark opening with guide rails */}
+            <mesh position={[l.x, l.y + l.h / 2, FZ - 0.01]}>
+              <boxGeometry args={[l.w * 0.96, l.h * 0.92, 0.04]} />
+              <meshStandardMaterial color="#07080a" emissive={selSlot === s.id ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} />
             </mesh>
-            {c && (
-              <mesh position={isHdd ? [l.x + l.w * 0.3, l.y + l.h / 2, zFront + 0.03] : [l.x, l.y + l.h * 0.25, zFront + 0.03]} rotation={[open ? -0.5 : 0, 0, 0]} material={MAT.orangeTouch}>
-                <boxGeometry args={isHdd ? [l.w * 0.3, l.h * 0.5, 0.04] : [l.w * 0.6, l.h * 0.22, 0.04]} />
-              </mesh>
-            )}
-            {c && lod === 'full' && (
-              <mesh position={isHdd ? [l.x + l.w * 0.08, l.y + l.h / 2, zFront + 0.03] : [l.x, l.y + l.h * 0.5, zFront + 0.03]} material={MAT.orangeTouch}>
-                <cylinderGeometry args={[0.025, 0.025, 0.03, 10]} />
-              </mesh>
-            )}
-            <Led state={led} position={isHdd ? [l.x - l.w * 0.4, l.y + l.h / 2, zFront + 0.04] : [l.x, l.y + l.h * 0.9, zFront + 0.04]} size={0.022} period={led === 'blue_blink' ? 0.5 : led === 'green_blink' ? 0.25 : 1} />
+            <SlideAnim item={c} dir={[0, 0, 1]} dist={l.d + 0.6} speed={1.1}>
+              {() => (
+                <group>
+                  {/* the drive itself, hidden inside the chassis until it slides out */}
+                  <mesh position={[l.x, l.y + l.h / 2, zFront - 0.06 - l.d / 2]} raycast={() => null}>
+                    <boxGeometry args={[l.w * 0.9, l.h * 0.86, l.d]} />
+                    <meshStandardMaterial color={isHdd ? '#aeb5bd' : '#6d757f'} metalness={0.8} roughness={0.35} />
+                  </mesh>
+                  {isHdd && lod === 'full' && (
+                    <Label text={'20TB SATA\n7200 RPM'} position={[l.x, l.y + l.h * 0.93, zFront - 0.06 - l.d / 2]} rotation={[-Math.PI / 2, 0, 0]} size={[l.w * 0.7, l.d * 0.5]} opts={{ bg: '#e9edf0', fg: '#111', w: 192, h: 128, font: 'bold 26px monospace' }} />
+                  )}
+                  {/* carrier faceplate */}
+                  <mesh position={[l.x, l.y + l.h / 2, zFront - 0.02]}>
+                    <boxGeometry args={[l.w * 0.96, l.h * 0.92, 0.06]} />
+                    <meshStandardMaterial color="#3d444e" map={lod === 'full' ? carrierTex(isHdd ? 'hdd' : 'nvme') : null} emissive={selSlot === s.id ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.5} roughness={0.5} />
+                  </mesh>
+                  {/* hinged handle (orange = hot-swap) */}
+                  <group position={isHdd ? [l.x + l.w * 0.46, l.y + l.h / 2, zFront + 0.02] : [l.x, l.y + l.h * 0.05, zFront + 0.02]} rotation={isHdd ? [0, open ? -0.9 : 0, 0] : [open ? 0.9 : 0, 0, 0]}>
+                    <mesh position={isHdd ? [-l.w * 0.17, 0, 0.02] : [0, l.h * 0.13, 0.02]} material={MAT.orangeTouch}>
+                      <boxGeometry args={isHdd ? [l.w * 0.34, l.h * 0.62, 0.035] : [l.w * 0.72, l.h * 0.26, 0.035]} />
+                    </mesh>
+                  </group>
+                  {lod === 'full' && (
+                    <mesh position={isHdd ? [l.x + l.w * 0.04, l.y + l.h / 2, zFront + 0.015] : [l.x, l.y + l.h * 0.36, zFront + 0.015]} rotation={[Math.PI / 2, 0, 0]} material={MAT.orangeTouch}>
+                      <cylinderGeometry args={[0.022, 0.022, 0.025, 12]} />
+                    </mesh>
+                  )}
+                </group>
+              )}
+            </SlideAnim>
+            <Led state={led} position={isHdd ? [l.x - l.w * 0.42, l.y + l.h / 2, zFront + 0.03] : [l.x, l.y + l.h * 0.92, zFront + 0.03]} size={0.022} period={led === 'blue_blink' ? 0.5 : led === 'green_blink' ? 0.25 : 1} />
             {g(s.id) && <GuideGlow position={[l.x, l.y + l.h / 2, zFront]} size={[l.w, l.h, 0.1]} />}
           </group>
         );
@@ -522,8 +602,13 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
       </mesh>
       {lod === 'full' && (
         <>
-          <Label text={dev.assetTag} position={[-2.12, 0.62, FZ + 0.065]} size={[0.2, 0.08]} opts={{ w: 160, h: 64, bg: '#f4f4f4' }} />
-          <Label text={dev.hostname.split('-').slice(-1)[0]} position={[-2.12, 0.28, FZ + 0.065]} size={[0.2, 0.07]} opts={{ w: 160, h: 56, bg: '#ffffff' }} />
+          <AssetTag dev={dev} glow={g('assettag')} />
+          <Label text={dev.hostname.split('-').slice(-1)[0]} position={[-2.12, 0.12, FZ + 0.065]} size={[0.2, 0.07]} opts={{ w: 160, h: 56, bg: '#ffffff' }} />
+          {[0.06, 0.8].map((y) => (
+            <mesh key={y} position={[-2.12, y, FZ + 0.065]} rotation={[Math.PI / 2, 0, 0]} material={MAT.silver} raycast={() => null}>
+              <cylinderGeometry args={[0.022, 0.022, 0.02, 10]} />
+            </mesh>
+          ))}
         </>
       )}
       {/* pull handles + rack-ear slam latches */}
@@ -553,21 +638,28 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
 }
 
 function Psu({ dev, slot, lod, guide, selected, onSlot, onFastener }: { dev: Device; slot: string; lod: 'full' | 'low'; guide?: string; selected: boolean; onSlot: () => void; onFastener: (id: string) => void }) {
-  const w = useStore.getState().world!;
   const l = MODELS[dev.model].layout[slot];
   const c = dev.slots[slot];
   const g = (key: string) => guide === key;
-  if (!c) {
-    return (
-      <group onClick={handler(onSlot)}>
-        <mesh position={[l.x, l.y + l.h / 2, RZ + 0.02]}>
-          <boxGeometry args={[l.w, l.h, 0.04]} />
-          <meshStandardMaterial color="#050505" emissive={selected ? '#1d6f8f' : '#000'} />
-        </mesh>
-        {g(slot) && <GuideGlow position={[l.x, l.y + l.h / 2, RZ]} size={[l.w, l.h, 0.1]} />}
-      </group>
-    );
-  }
+  return (
+    <group>
+      {/* the empty bay behind the PSU */}
+      <mesh position={[l.x, l.y + l.h / 2, RZ + 0.03]} onClick={handler(onSlot)}>
+        <boxGeometry args={[l.w, l.h, 0.04]} />
+        <meshStandardMaterial color="#050505" emissive={!c && selected ? '#1d6f8f' : '#000'} />
+      </mesh>
+      {!c && g(slot) && <GuideGlow position={[l.x, l.y + l.h / 2, RZ]} size={[l.w, l.h, 0.1]} />}
+      <SlideAnim item={c} dir={[0, 0, -1]} dist={l.d + 0.7} speed={0.9}>
+        {(pc) => <PsuBody dev={dev} slot={slot} c={pc} lod={lod} guide={guide} selected={selected} onSlot={onSlot} onFastener={onFastener} />}
+      </SlideAnim>
+    </group>
+  );
+}
+
+function PsuBody({ dev, slot, c, lod, guide, selected, onSlot, onFastener }: { dev: Device; slot: string; c: Component; lod: 'full' | 'low'; guide?: string; selected: boolean; onSlot: () => void; onFastener: (id: string) => void }) {
+  const w = useStore.getState().world!;
+  const l = MODELS[dev.model].layout[slot];
+  const g = (key: string) => guide === key;
   const tabPressed = !isTight(dev, slot, 'tab');
   const bailOn = isTight(dev, slot, 'bail');
   const out = (c.seated ? 0 : -0.3) + (tabPressed ? -0.08 : 0);
@@ -580,8 +672,15 @@ function Psu({ dev, slot, lod, guide, selected, onSlot, onFastener }: { dev: Dev
         <boxGeometry args={[l.w, l.h, l.d]} />
         <meshStandardMaterial color={dc ? '#4a3b2a' : '#30363e'} emissive={selected ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.6} roughness={0.4} />
       </mesh>
+      {/* spec label on top: only visible once it's pulled out */}
+      <Label text={`${c.partNumber}\nS/N ${c.serial}\n100-240V~ 10A  ${dc ? '' : '80+ TITANIUM'}`} position={[l.x, yc + l.h / 2 + 0.003, l.z + out]} rotation={[-Math.PI / 2, 0, 0]} size={[l.w * 0.85, l.d * 0.45]} opts={{ bg: '#e9edf0', fg: '#111', w: 256, h: 160, font: 'bold 18px monospace' }} />
       {lod === 'full' && (
         <>
+          {/* fan behind the grille */}
+          <mesh position={[l.x - 0.14, yc, face + 0.004]} rotation={[0, Math.PI, 0]} raycast={() => null}>
+            <ringGeometry args={[0.04, 0.16, 20]} />
+            <meshStandardMaterial color="#15181c" />
+          </mesh>
           {/* honeycomb exhaust grille */}
           <mesh position={[l.x - 0.14, yc, face - 0.002]} rotation={[0, Math.PI, 0]} raycast={() => null}>
             <planeGeometry args={[0.36, l.h * 0.86]} />
@@ -655,17 +754,35 @@ function RearPanel({ dev, lod, guide, onSlot, onPort, onFastener, pendingPort, s
       )}
       {/* OCP NIC: faceplate, SFP cages, pull tab, captive thumbscrew */}
       <group onClick={handler(() => onSlot('OCP0'))}>
-        <mesh position={[l.x, l.y + l.h / 2, RZ + 0.01]}>
+        <mesh position={[l.x, l.y + l.h / 2, RZ + 0.03]}>
           <boxGeometry args={[l.w, l.h + 0.05, 0.03]} />
-          <meshStandardMaterial color={nic ? '#596270' : '#050505'} emissive={selSlot === 'OCP0' ? '#1d6f8f' : '#000'} />
+          <meshStandardMaterial color="#050505" emissive={!nic && selSlot === 'OCP0' ? '#1d6f8f' : '#000'} />
         </mesh>
-        {nic && lod === 'full' && (
-          <mesh position={[l.x - l.w / 2 + 0.03, l.y + l.h / 2, RZ - 0.06]} material={MAT.orangeTouch}>
-            <boxGeometry args={[0.04, 0.1, 0.1]} />
-          </mesh>
-        )}
+        <SlideAnim item={nic} dir={[0, 0, -1]} dist={l.d + 0.6} speed={1}>
+          {() => (
+            <group>
+              <mesh position={[l.x, l.y + l.h / 2, RZ + 0.01]}>
+                <boxGeometry args={[l.w, l.h + 0.05, 0.03]} />
+                <meshStandardMaterial color="#596270" metalness={0.7} roughness={0.35} emissive={selSlot === 'OCP0' ? '#1d6f8f' : '#000'} />
+              </mesh>
+              {/* the card itself, inside the chassis */}
+              <mesh position={[l.x, l.y + l.h / 2, RZ + 0.03 + l.d / 2]} raycast={() => null}>
+                <boxGeometry args={[l.w * 0.92, 0.03, l.d]} />
+                <meshStandardMaterial color="#0f4d2c" />
+              </mesh>
+              <mesh position={[l.x + 0.1, l.y + l.h / 2 + 0.04, RZ + 0.03 + l.d * 0.6]} material={MAT.silver} raycast={() => null}>
+                <boxGeometry args={[0.3, 0.06, 0.3]} />
+              </mesh>
+              {lod === 'full' && (
+                <mesh position={[l.x - l.w / 2 + 0.03, l.y + l.h / 2, RZ - 0.06]} material={MAT.orangeTouch}>
+                  <boxGeometry args={[0.04, 0.1, 0.1]} />
+                </mesh>
+              )}
+              {lod === 'full' && <Screw pos={[l.x + l.w / 2 - 0.05, l.y + l.h / 2, RZ - 0.02]} tight={isTight(dev, 'OCP0', 'thumb')} thumb r={0.035} axis="-z" onClick={handler(() => onFastener('OCP0', 'thumb'))} glow={g('fastener:OCP0:thumb')} />}
+            </group>
+          )}
+        </SlideAnim>
       </group>
-      {nic && lod === 'full' && <Screw pos={[l.x + l.w / 2 - 0.05, l.y + l.h / 2, RZ - 0.02]} tight={isTight(dev, 'OCP0', 'thumb')} thumb r={0.035} axis="-z" onClick={handler(() => onFastener('OCP0', 'thumb'))} glow={g('fastener:OCP0:thumb')} />}
       {g('OCP0') && <GuideGlow position={[l.x, l.y + l.h / 2, RZ]} size={[l.w, l.h + 0.05, 0.1]} />}
       {(['nic0p0', 'nic0p1', 'bmc'] as const).map((p) => {
         const pos = portLocal(dev, p);
@@ -697,7 +814,7 @@ function Lid({ dev, guide, selected, onSlot, onFastener }: { dev: Device; guide?
     <group position={[0, 0, back]}>
       <mesh position={[0, H + 0.01, 0]} onClick={handler(onSlot)} {...hoverCursor()}>
         <boxGeometry args={[4.42, 0.02, CHASSIS_D * 0.98]} />
-        <meshStandardMaterial color="#6b7480" metalness={0.7} roughness={0.35} emissive={selected ? '#1d6f8f' : '#000'} />
+        <meshStandardMaterial color="#ffffff" map={lidTex()} metalness={0.6} roughness={0.4} emissive={selected ? '#1d6f8f' : '#000'} />
       </mesh>
       <Label text="⇦ LIFT LATCH · SLIDE BACK ⇨" position={[0, H + 0.025, 1.5]} rotation={[-Math.PI / 2, 0, 0]} size={[1.4, 0.2]} opts={{ bg: '#6b7480', fg: '#1d2025', w: 340, h: 50 }} />
       {/* service label */}
@@ -735,7 +852,9 @@ function ServerMeshInner(p: ServerMeshProps) {
       {/* body */}
       <mesh position={[0, H / 2, 0]} onClick={handler(() => p.onDevice(dev.id))} {...hoverCursor()} visible={!showInside}>
         <boxGeometry args={[4.4, H, CHASSIS_D]} />
-        <meshStandardMaterial color={p.selected ? '#4b5563' : '#3a414b'} metalness={0.55} roughness={0.45} emissive={p.selected ? '#103040' : '#000'} />
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <meshStandardMaterial key={i} attach={`material-${i}`} color={i === 2 ? (p.selected ? '#c9d6e3' : '#ffffff') : p.selected ? '#4b5563' : '#3a414b'} map={i === 2 && lod === 'full' ? lidTex() : null} metalness={0.55} roughness={0.45} emissive={p.selected ? '#103040' : '#000'} />
+        ))}
       </mesh>
       {showInside && (
         <>
@@ -751,7 +870,11 @@ function ServerMeshInner(p: ServerMeshProps) {
           <Interior dev={dev} ac={ac} selSlot={p.selSlot} highlightSlot={p.highlightSlot} guide={p.guide} onSlot={onSlot} onFastener={onFastener} onLatch={(s) => p.onLatch(dev.id, s)} />
         </>
       )}
-      {detail && dev.layers.lid && (dev.servicePosition || !dev.rackId) && <Lid dev={dev} guide={p.guide} selected={p.selSlot === 'layer:lid'} onSlot={() => onSlot('layer:lid')} onFastener={(id) => onFastener('lid', id)} />}
+      {detail && (dev.servicePosition || !dev.rackId) && (
+        <SlideAnim item={dev.layers.lid} dir={[0, 0.45, -1]} dist={3.2} speed={1}>
+          {() => <Lid dev={dev} guide={p.guide} selected={p.selSlot === 'layer:lid'} onSlot={() => onSlot('layer:lid')} onFastener={(id) => onFastener('lid', id)} />}
+        </SlideAnim>
+      )}
       <FrontPanel dev={dev} ac={ac} lod={lod} guide={p.guide} onSlot={onSlot} onDevice={() => p.onDevice(dev.id)} onFastener={onFastener} selSlot={p.selSlot} />
       <RearPanel dev={dev} lod={lod} guide={p.guide} onSlot={onSlot} onPort={(port) => p.onPort(dev.id, port)} onFastener={onFastener} pendingPort={p.pendingPort} selSlot={p.selSlot} />
     </group>

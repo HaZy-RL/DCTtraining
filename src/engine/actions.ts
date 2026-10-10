@@ -348,8 +348,10 @@ function reduce(w: World, a: Action): ActionResult {
       const tk = ticketForDevice(w, dev.id) ?? ticketForLocation(w, dev.id);
       if (tk?.serial && tk.serial !== dev.serial) {
         flag(w, `mismatch_found:${dev.id}`);
+        toast(w, 'warn', `📷 Beep. ⚠ ${dev.assetTag} / S/N ${dev.serial} does NOT match ${tk.key} (expects ${tk.serial}).`);
         return ok(`⚠ MISMATCH: asset ${dev.assetTag}, serial ${dev.serial} — ticket ${tk.key} expects serial ${tk.serial}. Stop and verify!`);
       }
+      toast(w, 'success', `📷 Beep. ${dev.assetTag} · S/N ${dev.serial} · ${dev.hostname}${tk ? ` ✓ matches ${tk.key}` : ''}`);
       return ok(`Scanned ${dev.assetTag} — serial ${dev.serial}, ${dev.hostname}. ${tk ? `Matches ${tk.key}.` : ''}`);
     }
     case 'servicePosition': {

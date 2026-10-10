@@ -216,6 +216,9 @@ function CableTube({ cable, a, b, side, selected, onClick }: { cable: Cable; a: 
   const geo = useMemo(() => new THREE.TubeGeometry(curveFor(a, b, side), 40, cable.type === 'cat6' ? 0.022 : 0.03, 6, false), [a.x, a.y, a.z, b.x, b.y, b.z, side, cable.type]); // eslint-disable-line react-hooks/exhaustive-deps
   const color = cable.condition === 'damaged' ? '#7a2b2b' : CABLE_COLORS[cable.type] ?? '#111';
   return (
+    <group>
+      <Plug at={a} type={cable.type} color={color} />
+      <Plug at={b} type={cable.type} color={color} />
     <mesh
       geometry={geo}
       onClick={(e) => {
@@ -226,6 +229,48 @@ function CableTube({ cable, a, b, side, selected, onClick }: { cable: Cable; a: 
       onPointerOut={() => (document.body.style.cursor = '')}
     >
       <meshStandardMaterial color={selected ? '#4fd1c5' : color} emissive={selected ? '#4fd1c5' : '#000'} emissiveIntensity={0.5} roughness={0.6} />
+    </mesh>
+    </group>
+  );
+}
+
+const shellMat = new THREE.MeshStandardMaterial({ color: '#c3cad2', metalness: 0.9, roughness: 0.25 });
+const plugBlack = new THREE.MeshStandardMaterial({ color: '#16181b', roughness: 0.7 });
+
+/** Connector body at a port: SFP28 DAC shell with pull tab, RJ45 boot, LC duplex, or a C13 power plug. */
+function Plug({ at, type, color }: { at: THREE.Vector3; type: Cable['type'] | 'power'; color: string }) {
+  const rear = -1; // every port faces the hot aisle (-z)
+  if (type === 'dac' || type === 'aoc')
+    return (
+      <group position={[at.x, at.y, at.z + rear * 0.13]} raycast={() => null}>
+        <mesh material={shellMat}>
+          <boxGeometry args={[0.12, 0.08, 0.26]} />
+        </mesh>
+        <mesh position={[0, -0.05, rear * 0.2]}>
+          <boxGeometry args={[0.05, 0.015, 0.22]} />
+          <meshStandardMaterial color={type === 'aoc' ? '#2bb3c0' : '#2f7de1'} />
+        </mesh>
+      </group>
+    );
+  if (type === 'cat6')
+    return (
+      <group position={[at.x, at.y, at.z + rear * 0.1]}>
+        <mesh>
+          <boxGeometry args={[0.11, 0.09, 0.2]} />
+          <meshStandardMaterial color={color} transparent opacity={0.75} roughness={0.3} />
+        </mesh>
+      </group>
+    );
+  if (type === 'power')
+    return (
+      <mesh position={[at.x, at.y, at.z + rear * 0.1]} material={plugBlack}>
+        <boxGeometry args={[0.16, 0.12, 0.2]} />
+      </mesh>
+    );
+  return (
+    <mesh position={[at.x, at.y, at.z + rear * 0.1]}>
+      <boxGeometry args={[0.1, 0.06, 0.18]} />
+      <meshStandardMaterial color={type === 'fiber_smf' ? '#2f7de1' : '#e9edf0'} />
     </mesh>
   );
 }
@@ -278,8 +323,11 @@ function PowerCord({ a, b, side }: { a: THREE.Vector3; b: THREE.Vector3; side: '
     return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 24, 0.03, 6, false);
   }, [a.x, a.y, a.z, b.x, b.y, b.z]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <mesh geometry={geo}>
-      <meshStandardMaterial color={side === 'A' ? '#2f6fe1' : '#d23b3b'} roughness={0.7} />
-    </mesh>
+    <group>
+      <Plug at={a} type="power" color="#111" />
+      <mesh geometry={geo}>
+        <meshStandardMaterial color={side === 'A' ? '#2f6fe1' : '#d23b3b'} roughness={0.7} />
+      </mesh>
+    </group>
   );
 }

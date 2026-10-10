@@ -49,6 +49,16 @@ export function FastenerList({ dev, target, title }: { dev: Device; target: stri
   );
 }
 
+function ScannerButton() {
+  const scanner = useStore((s) => s.scanner);
+  const setScanner = useStore((s) => s.setScanner);
+  return (
+    <button className={`btn sm ${scanner ? 'on primary' : ''}`} title="Pick up the handheld barcode scanner, then click the barcode sticker on the server's left rack ear" onClick={() => setScanner(!scanner)}>
+      {scanner ? '📷 Scanner in hand (put away)' : '📷 Pick up barcode scanner'}
+    </button>
+  );
+}
+
 function LocationBar() {
   const w = useStore((s) => s.world!);
   const dispatch = useStore((s) => s.dispatch);
@@ -353,9 +363,7 @@ function DeviceCard({ dev, buildMode }: { dev: Device; buildMode?: boolean }) {
       {here && (
         <>
           <div className="actions">
-            <button className="btn sm" onClick={() => dispatch({ type: 'scanAsset', deviceId: dev.id })}>
-              📷 Scan asset tag
-            </button>
+            <ScannerButton />
             <button className="btn sm" onClick={() => dispatch({ type: 'powerButton', deviceId: dev.id })}>
               ⏻ Press power
             </button>

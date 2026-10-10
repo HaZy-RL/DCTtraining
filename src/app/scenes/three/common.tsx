@@ -1,6 +1,6 @@
 // Shared 3D primitives: LEDs, canvas-texture labels, rack geometry and world-space positions.
 import { useFrame } from '@react-three/fiber';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
 import { MODELS } from '../../../engine/catalog';
 import { parseOutlet, type Led as LedState } from '../../../engine/projectors';
@@ -324,4 +324,118 @@ export function pcbTex(): THREE.CanvasTexture {
     g.font = 'bold 18px monospace';
     g.fillText('HX-MB-2S  REV C', 20, 490);
   });
+}
+
+/** Asset-tag sticker: Code-128-style bars (deterministic per tag) with the human-readable tag under it. */
+export function barcodeTex(text: string): THREE.CanvasTexture {
+  return canvasTex(`bc${text}`, 160, 320, (g) => {
+    g.fillStyle = '#f7f7f2';
+    g.fillRect(0, 0, 160, 320);
+    // bars run across the sticker; the sticker sits vertically on the rack ear
+    g.save();
+    g.translate(160, 0);
+    g.rotate(Math.PI / 2);
+    let h = 7;
+    for (const ch of text) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    g.fillStyle = '#111';
+    let x = 18;
+    g.fillRect(x, 20, 4, 96);
+    x += 7;
+    while (x < 290) {
+      h = (h * 1103515245 + 12345) >>> 0;
+      const wbar = 2 + (h % 4) * 1.6;
+      g.fillRect(x, 20, wbar, 96);
+      x += wbar + 2 + ((h >> 5) % 3) * 1.6;
+    }
+    g.font = 'bold 26px monospace';
+    g.textAlign = 'center';
+    g.fillText(text, 160, 148);
+    g.restore();
+  });
+}
+
+/** Drive-carrier faceplate: perforated upper section, label window, release button recess. */
+export function carrierTex(kind: 'hdd' | 'nvme'): THREE.CanvasTexture {
+  return canvasTex(`carrier${kind}`, 256, kind === 'hdd' ? 64 : 256, (g) => {
+    const W = 256;
+    const Hh = kind === 'hdd' ? 64 : 256;
+    g.fillStyle = '#3d444e';
+    g.fillRect(0, 0, W, Hh);
+    g.fillStyle = '#0d1014';
+    const cols = kind === 'hdd' ? 20 : 7;
+    const rows = kind === 'hdd' ? 3 : 18;
+    const x0 = kind === 'hdd' ? 70 : 30;
+    const y0 = kind === 'hdd' ? 10 : 40;
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++) {
+        g.beginPath();
+        g.arc(x0 + c * 8 + (r % 2 ? 4 : 0), y0 + r * 8, 2.4, 0, Math.PI * 2);
+        g.fill();
+      }
+    g.strokeStyle = '#59616c';
+    g.lineWidth = 3;
+    g.strokeRect(2, 2, W - 4, Hh - 4);
+  });
+}
+
+/** Chassis lid / top: brushed panel with a vent row and seams. */
+export function lidTex(): THREE.CanvasTexture {
+  return canvasTex('lid', 512, 512, (g) => {
+    g.fillStyle = '#6b7480';
+    g.fillRect(0, 0, 512, 512);
+    for (let y = 0; y < 512; y += 3) {
+      g.fillStyle = `rgba(255,255,255,${0.02 + ((y * 7919) % 13) / 400})`;
+      g.fillRect(0, y, 512, 1);
+    }
+    g.fillStyle = '#2b3038';
+    for (let i = 0; i < 26; i++) g.fillRect(40 + i * 17, 26, 9, 46);
+    g.fillStyle = '#4e5661';
+    g.fillRect(0, 300, 512, 3);
+  });
+}
+
+/**
+ * Animates a part sliding into its slot when it appears and out of it when it is removed.
+ * `item` is the part (or `true` for a cover/layer); while it slides out, the last value is still rendered.
+ */
+export function SlideAnim<T>({ item, dir, dist = 1, speed = 1.6, children }: { item: T | null | undefined | false; dir: [number, number, number]; dist?: number; speed?: number; children: (it: T) => ReactNode }) {
+  const [shown, setShown] = useState<T | null>(item || null);
+  const st = useRef<{ phase: 'idle' | 'in' | 'out'; t: number; first: boolean }>({ phase: 'idle', t: 1, first: true });
+  const g = useRef<THREE.Group>(null);
+  const idOf = (x: unknown) => (x && typeof x === 'object' && 'uid' in x ? (x as { uid: string }).uid : !!x);
+  useEffect(() => {
+    const s = st.current;
+    if (s.first) {
+      s.first = false;
+      return;
+    }
+    if (item) {
+      if (!shown || idOf(shown) !== idOf(item) || s.phase === 'out') {
+        s.phase = 'in';
+        s.t = 0;
+      }
+      setShown(item);
+    } else if (shown && s.phase !== 'out') {
+      s.phase = 'out';
+      s.t = 0;
+    }
+  }, [item]); // eslint-disable-line react-hooks/exhaustive-deps
+  useFrame((_, dt) => {
+    const s = st.current;
+    if (!g.current) return;
+    if (s.phase === 'idle') {
+      g.current.position.set(0, 0, 0);
+      return;
+    }
+    s.t = Math.min(1, s.t + dt * speed);
+    const e = s.t < 0.5 ? 2 * s.t * s.t : 1 - Math.pow(-2 * s.t + 2, 2) / 2;
+    const off = s.phase === 'in' ? dist * (1 - e) : dist * e;
+    g.current.position.set(dir[0] * off, dir[1] * off, dir[2] * off);
+    if (s.t >= 1) {
+      if (s.phase === 'out') setShown(null);
+      s.phase = 'idle';
+    }
+  });
+  if (!shown) return null;
+  return <group ref={g}>{children(shown)}</group>;
 }

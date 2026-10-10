@@ -58,8 +58,13 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
     };
   }, [camera]);
   useEffect(() => {
+    let drag: { x: number; y: number; moved: number } | null = null;
     const down = (e: KeyboardEvent) => {
       if (typingInField()) return;
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        keys.current.clear();
+        return;
+      }
       const k = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
         keys.current.add(k);
@@ -67,13 +72,23 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
       }
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.key.toLowerCase());
-    const blur = () => keys.current.clear();
+    // Anything that can swallow a keyup (context menu, alt-tab, a dialog) must stop you walking.
+    const blur = () => {
+      keys.current.clear();
+      drag = null;
+    };
+    const vis = () => document.hidden && blur();
+    const anyCtx = (e: Event) => {
+      blur();
+      e.preventDefault();
+    };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('blur', blur);
+    document.addEventListener('visibilitychange', vis);
+    window.addEventListener('contextmenu', anyCtx, true);
     // drag to look
     const el = gl.domElement;
-    let drag: { x: number; y: number; moved: number } | null = null;
     const pd = (e: PointerEvent) => {
       pointerGuard.dragged = false;
       drag = { x: e.clientX, y: e.clientY, moved: 0 };
@@ -101,6 +116,9 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('blur', blur);
+      document.removeEventListener('visibilitychange', vis);
+      window.removeEventListener('contextmenu', anyCtx, true);
+      keys.current.clear();
       el.removeEventListener('pointerdown', pd);
       window.removeEventListener('pointermove', pm);
       window.removeEventListener('pointerup', pu);

@@ -146,10 +146,11 @@ export function repairSteps(c: RepairCtx): Step[] {
       id: 'scan',
       text: `Walk to ${dev.rackId} and scan the asset tag to confirm it's the right box`,
       why: 'Hostnames lie and machines get moved. Matching the asset tag or serial to the ticket keeps you from working on the wrong server.',
-      hint: 'Walk to the rack, click the server, then "Scan asset tag".',
+      hint: 'Walk to the rack, pick up the barcode scanner (inspector), then click the barcode sticker on the left rack ear.',
       coach: (w) => [
         ...approach(w, id, 'front'),
-        L(`Click ${dev.hostname} and press 📷 Scan asset tag. Compare the serial with the ticket`, !!w.flags[`scanned:${id}`], { deviceId: id, rackId: dev.rackId ?? undefined, side: 'front' }),
+        L(`Click ${dev.hostname}, then "📷 Pick up barcode scanner" in the inspector`, !!w.flags[`scanned:${id}`], { deviceId: id, rackId: dev.rackId ?? undefined, side: 'front' }),
+        L('Aim at the barcode sticker on the LEFT rack ear and click it. Check the serial matches the ticket', !!w.flags[`scanned:${id}`], { deviceId: id, rackId: dev.rackId ?? undefined, side: 'front', sel: 'assettag' }),
       ],
       points: 5,
       required: false,

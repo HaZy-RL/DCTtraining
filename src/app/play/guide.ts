@@ -35,7 +35,7 @@ export function useCoach(): CoachState {
 
 /** Map a guide key to what the inspector should select for it. */
 export function selectionFor(sel?: string): string | undefined {
-  if (!sel || sel === 'power' || sel === 'chassis') return undefined;
+  if (!sel || sel === 'power' || sel === 'chassis' || sel === 'assettag') return undefined;
   if (sel.startsWith('cord:')) return sel.slice(5);
   if (sel.startsWith('fastener:')) {
     const parts = sel.split(':');

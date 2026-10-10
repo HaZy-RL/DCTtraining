@@ -36,7 +36,9 @@ try {
   });
   console.log('fault', info);
   await click(/Walk to/);
-  await click(/Scan asset tag/);
+  // Pick up the scanner and "click" the barcode sticker (3D picking is driven through the same store call)
+  await click(/Pick up barcode scanner/);
+  await S(() => { const st = window.__DCT__.getState(); st.scanTag(st.inst.focusDeviceId); st.setScanner(false); });
   await click(/Rear \(hot aisle\)/);
   // select failed PSU via the "jump to a part" dropdown
   await page.locator('.inspector select').last().selectOption(info.slot);
@@ -48,6 +50,8 @@ try {
   await page.locator('.inspector .fastener', { hasText: 'Green release tab' }).getByRole('button', { name: 'Release' }).click();
   await page.waitForTimeout(250);
   await click(/Pull PSU out/);
+  await page.waitForTimeout(450);
+  await shot('30a-psu-sliding-out');
   // install the matching spare
   const row = page.locator('.inspector .row', { hasText: info.pn }).first();
   await row.getByRole('button', { name: 'Install' }).click();
@@ -110,6 +114,8 @@ try {
     const st = window.__DCT__.getState();
     st.dispatch({ type: 'layer', deviceId: st.inst.focusDeviceId, layer: 'shroud', install: false });
   });
+  await page.waitForTimeout(500);
+  await shot('35a-shroud-lifting');
   await page.waitForTimeout(1200);
   await shot('35-interior-dimms');
   // CPU heatsink screws close-up

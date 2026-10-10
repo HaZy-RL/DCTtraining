@@ -30,6 +30,7 @@ function SceneControls() {
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       const st = useStore.getState();
       if (e.key === 'v' || e.key === 'V') st.setCamMode(st.camMode === 'walk' ? 'inspect' : 'walk');
+      else if (e.key === 'Escape' && st.scanner) st.setScanner(false);
       else if (e.key === 'Escape' && st.camMode === 'walk') st.setCamMode('inspect');
       else if ((e.key === 'f' || e.key === 'F') && st.sel.deviceId) st.setCamMode('inspect');
     };
@@ -67,6 +68,21 @@ function SceneControls() {
             ))}
         </select>
       )}
+    </div>
+  );
+}
+
+/** Hint banner while the barcode scanner is in hand. */
+function ScannerHud() {
+  const scanner = useStore((s) => s.scanner);
+  const setScanner = useStore((s) => s.setScanner);
+  if (!scanner) return null;
+  return (
+    <div className="overlay scanner-hud">
+      📷 <b>Scanner ready.</b> Aim at the barcode sticker on the server's left rack ear (front, cold aisle) and click to scan.
+      <button className="btn sm" onClick={() => setScanner(false)}>
+        Put away (Esc)
+      </button>
     </div>
   );
 }
@@ -134,6 +150,7 @@ export function SceneHost() {
           </Suspense>
           <SceneControls />
           <WalkHud />
+          <ScannerHud />
           <Inspector buildMode={scene === 'rackbuild'} />
         </>
       );

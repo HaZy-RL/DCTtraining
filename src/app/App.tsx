@@ -21,7 +21,7 @@ function parseHash(): Screen {
 export function App() {
   const screen = useStore((s) => s.screen);
   useEffect(() => {
-    document.body.dataset.theme = screen.name === 'play' ? 'dark' : 'bright';
+    document.body.dataset.theme = screen.name === 'play' ? 'dark' : 'site';
   }, [screen.name]);
   useEffect(() => {
     if (useStore.getState().screen.name === 'menu') useStore.setState({ screen: parseHash() });
