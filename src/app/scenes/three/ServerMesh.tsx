@@ -7,7 +7,7 @@ import { isTight } from '../../../engine/fasteners';
 import { cpuTemp, hasAC, healthLed, powerLed, slotLed } from '../../../engine/projectors';
 import type { Component, Device, Rack } from '../../../engine/types';
 import { useStore } from '../../store';
-import { serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
+import { driveLabelTex, serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
 
 export interface ServerMeshProps {
   dev: Device;
@@ -487,6 +487,68 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
   );
 }
 
+/** A drive in its carrier: rails with screws, the drive casting, PCB, top label and the backplane connector. */
+function DriveBody({ l, isHdd, zFront }: { l: SlotLayout; isHdd: boolean; zFront: number }) {
+  const zc = zFront - 0.06 - l.d / 2;
+  const yc = l.y + l.h / 2;
+  // HDDs lie flat (wide); U.2 SSDs stand on edge (tall)
+  const bw = l.w * 0.82;
+  const bh = l.h * 0.8;
+  return (
+    <group raycast={() => null}>
+      {/* casting */}
+      <mesh position={[l.x, yc, zc]}>
+        <boxGeometry args={[bw, bh, l.d * 0.96]} />
+        <meshStandardMaterial color={isHdd ? '#b7bec6' : '#3a3f47'} metalness={0.85} roughness={0.3} />
+      </mesh>
+      {/* label on the wide face */}
+      {isHdd ? (
+        <mesh position={[l.x, yc + bh / 2 + 0.002, zc]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[bw * 0.8, l.d * 0.6]} />
+          <meshStandardMaterial map={driveLabelTex('hdd')} roughness={0.7} />
+        </mesh>
+      ) : (
+        <mesh position={[l.x + bw / 2 + 0.002, yc, zc]} rotation={[0, Math.PI / 2, 0]}>
+          <planeGeometry args={[l.d * 0.6, bh * 0.85]} />
+          <meshStandardMaterial map={driveLabelTex('nvme')} roughness={0.6} />
+        </mesh>
+      )}
+      {/* NVMe heat-spreader fins */}
+      {!isHdd &&
+        [-0.3, -0.15, 0, 0.15, 0.3].map((dz) => (
+          <mesh key={dz} position={[l.x - bw / 2 - 0.006, yc, zc + dz * l.d]} material={MAT.silver}>
+            <boxGeometry args={[0.012, bh * 0.85, 0.03]} />
+          </mesh>
+        ))}
+      {/* HDD PCB on the underside */}
+      {isHdd && (
+        <mesh position={[l.x, yc - bh / 2 - 0.006, zc - l.d * 0.1]}>
+          <boxGeometry args={[bw * 0.85, 0.01, l.d * 0.6]} />
+          <meshStandardMaterial color="#0f4d2c" />
+        </mesh>
+      )}
+      {/* carrier rails + mounting screws */}
+      {[-1, 1].map((side) => (
+        <group key={side}>
+          <mesh position={[l.x + side * (bw / 2 + (isHdd ? 0.05 : 0.01)), yc, zc]} material={MAT.chassisDark}>
+            <boxGeometry args={[isHdd ? 0.06 : 0.02, bh * (isHdd ? 0.9 : 1.04), l.d * 0.98]} />
+          </mesh>
+          {(isHdd ? [-0.3, 0.3] : [-0.25, 0.25]).map((dz) => (
+            <mesh key={dz} position={[l.x + side * (bw / 2 + (isHdd ? 0.085 : 0.025)), yc, zc + dz * l.d]} rotation={[0, 0, Math.PI / 2]} material={MAT.silver}>
+              <cylinderGeometry args={[0.022, 0.022, 0.012, 10]} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+      {/* SATA / SFF-8639 connector at the back */}
+      <mesh position={[l.x + (isHdd ? -bw * 0.2 : 0), yc - bh * 0.3, zc - l.d * 0.49]}>
+        <boxGeometry args={[isHdd ? bw * 0.45 : 0.05, 0.05, 0.03]} />
+        <meshStandardMaterial color="#111" />
+      </mesh>
+    </group>
+  );
+}
+
 /** Barcode asset-tag sticker on the left rack ear. With the scanner in hand, clicking it scans it. */
 function AssetTag({ dev, glow }: { dev: Device; glow: boolean }) {
   const scanAt = useStore((s) => (s.scanFx?.deviceId === dev.id ? s.scanFx.at : 0));
@@ -550,13 +612,7 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
               {() => (
                 <group>
                   {/* the drive itself, hidden inside the chassis until it slides out */}
-                  <mesh position={[l.x, l.y + l.h / 2, zFront - 0.06 - l.d / 2]} raycast={() => null}>
-                    <boxGeometry args={[l.w * 0.9, l.h * 0.86, l.d]} />
-                    <meshStandardMaterial color={isHdd ? '#aeb5bd' : '#6d757f'} metalness={0.8} roughness={0.35} />
-                  </mesh>
-                  {isHdd && lod === 'full' && (
-                    <Label text={'20TB SATA\n7200 RPM'} position={[l.x, l.y + l.h * 0.93, zFront - 0.06 - l.d / 2]} rotation={[-Math.PI / 2, 0, 0]} size={[l.w * 0.7, l.d * 0.5]} opts={{ bg: '#e9edf0', fg: '#111', w: 192, h: 128, font: 'bold 26px monospace' }} />
-                  )}
+                  <DriveBody l={l} isHdd={isHdd} zFront={zFront} />
                   {/* carrier faceplate */}
                   <mesh position={[l.x, l.y + l.h / 2, zFront - 0.02]}>
                     <boxGeometry args={[l.w * 0.96, l.h * 0.92, 0.06]} />
@@ -799,10 +855,16 @@ function RearPanel({ dev, lod, guide, onSlot, onPort, onFastener, pendingPort, s
         const pending = pendingPort === p;
         if (p !== 'bmc' && !nic) return null;
         return (
-          <mesh key={p} position={pos} onClick={handler(() => onPort(p))} {...hoverCursor('crosshair')}>
+          <group key={p}>
+          {/* SFP28 cage / RJ45 jack shell around the port opening */}
+          <mesh position={[pos.x, pos.y, pos.z + 0.012]} material={p === 'bmc' ? MAT.chassisDark : MAT.silver} raycast={() => null}>
+            <boxGeometry args={p === 'bmc' ? [0.19, 0.16, 0.03] : [0.18, 0.13, 0.03]} />
+          </mesh>
+          <mesh position={pos} onClick={handler(() => onPort(p))} {...hoverCursor('crosshair')}>
             <boxGeometry args={p === 'bmc' ? [0.16, 0.13, 0.04] : [0.15, 0.1, 0.04]} />
             <meshStandardMaterial color={pending ? '#4fd1c5' : '#050505'} emissive={pending ? '#4fd1c5' : '#000'} emissiveIntensity={0.8} />
           </mesh>
+          </group>
         );
       })}
       {lod === 'full' && (

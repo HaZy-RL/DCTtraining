@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { FLOOR_ROWS } from '../../content/floor';
 import { useStore } from '../store';
 import { Label } from './three/common';
+import { Look } from './three/Look';
 
 const PITCH_X = 0.8;
 const ROW_GAP = 3.2;
@@ -22,6 +23,7 @@ export default function FloorScene() {
       <Canvas camera={{ position: [0, 16, 13], fov: 45 }}>
         <color attach="background" args={['#0a0e13']} />
         <ambientLight intensity={0.6} />
+        <Look aoRadius={0.4} aoIntensity={1.6} />
         <directionalLight position={[5, 20, 10]} intensity={1} />
         <mesh rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[20, 24]} />

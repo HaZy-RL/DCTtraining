@@ -16,12 +16,19 @@ function run(id: string, seed: number) {
     if (!r.ok) throw new Error(`${a.type}: ${r.message}`);
     return r;
   };
-  return { inst, w, dev, key, act };
+  /** Walk to the workroom, take the spare with this PN off its shelf; returns its spares index. */
+  const pick = (pn: string) => {
+    act({ type: 'walk', to: 'cage' });
+    const i = w.spares.findIndex((s) => s.component.partNumber === pn && s.location === 'cage');
+    act({ type: 'pickPart', spareIndex: i });
+    return i;
+  };
+  return { inst, w, dev, key, act, pick };
 }
 
 describe('DIMM golden path', () => {
   it('expert path reaches Gold', () => {
-    const { inst, w, dev, key, act } = run('hw-dimm', 1234);
+    const { inst, w, dev, key, act, pick } = run('hw-dimm', 1234);
     const slot = Object.entries(dev.slots).find(([, c]) => c?.failure)![0];
     const oldSerial = dev.slots[slot]!.serial;
     act({ type: 'ticketTransition', key, to: 'In Progress' });
@@ -30,6 +37,7 @@ describe('DIMM golden path', () => {
     advance(w, 200);
     expect(w.tickets[key].hostState).toBe('Drained');
     act({ type: 'bmcPower', deviceId: dev.id, op: 'soft' });
+    pick('MEM-64G-D5-5600-2R');
     act({ type: 'walk', to: dev.rackId! });
     act({ type: 'scanAsset', deviceId: dev.id });
     act({ type: 'walk', to: dev.rackId!, side: 'rear' });
@@ -49,7 +57,7 @@ describe('DIMM golden path', () => {
     act({ type: 'layer', deviceId: dev.id, layer: 'shroud', install: false });
     act({ type: 'latch', deviceId: dev.id, slot, state: 'open' });
     act({ type: 'removePart', deviceId: dev.id, slot });
-    const idx = w.spares.findIndex((s) => s.component.partNumber === 'MEM-64G-D5-5600-2R');
+    const idx = w.spares.findIndex((s) => s.component.partNumber === 'MEM-64G-D5-5600-2R' && s.location === 'cart');
     act({ type: 'insertPart', deviceId: dev.id, slot, source: { spareIndex: idx }, aligned: true });
     act({ type: 'latch', deviceId: dev.id, slot, state: 'closed' });
     act({ type: 'layer', deviceId: dev.id, layer: 'shroud', install: true });
@@ -74,6 +82,7 @@ describe('DIMM golden path', () => {
     const old = w.trainee.tray.find((p) => p.serial === oldSerial)!;
     act({ type: 'bag', uid: old.uid });
     act({ type: 'tag', uid: old.uid });
+    act({ type: 'walk', to: 'cage' });
     act({ type: 'bin', uid: old.uid, bin: 'rma' });
     const newSerial = w.devices[dev.id].slots[slot]!.serial;
     act({ type: 'ticketWorklog', key, text: `Replaced ${slot}. Old S/N ${oldSerial}, new S/N ${newSerial}. Verified 1024GB in dmidecode.` });
@@ -104,10 +113,11 @@ describe('DIMM golden path', () => {
 
 describe('physical fasteners and aisles', () => {
   it('PSU hot-swap: rear aisle only, server must be racked, bail and tab must be worked by hand', () => {
-    const { inst, w, dev, key, act } = run('hw-psu', 4242);
+    const { inst, w, dev, key, act, pick } = run('hw-psu', 4242);
     const slot = Object.entries(dev.slots).find(([, c]) => c?.failure)![0];
     const try_ = (a: Action) => applyAction(w, a);
     act({ type: 'ticketTransition', key, to: 'In Progress' });
+    pick('PSU-1600W-AC-TI');
     act({ type: 'walk', to: dev.rackId! });
     act({ type: 'scanAsset', deviceId: dev.id });
     // From the cold aisle the PSU is out of reach
@@ -131,7 +141,7 @@ describe('physical fasteners and aisles', () => {
     expect(try_({ type: 'removePart', deviceId: dev.id, slot }).message).toMatch(/release tab/);
     act({ type: 'fastener', deviceId: dev.id, target: slot, id: 'tab', secure: false });
     act({ type: 'removePart', deviceId: dev.id, slot });
-    const idx = w.spares.findIndex((s) => s.component.partNumber === 'PSU-1600W-AC-TI');
+    const idx = w.spares.findIndex((s) => s.component.partNumber === 'PSU-1600W-AC-TI' && s.location === 'cart');
     act({ type: 'insertPart', deviceId: dev.id, slot, source: { spareIndex: idx } });
     act({ type: 'cord', deviceId: dev.id, psu: slot, outlet });
     const cordStep = () => evaluate(inst, 'practice').steps.find((s) => s.id === 'cord')!.done;
@@ -142,9 +152,10 @@ describe('physical fasteners and aisles', () => {
   });
 
   it('CPU heatsink: screws loosen 4→1, torque 1→4, and a loose heatsink trips on power-on', () => {
-    const { w, dev, key, act } = run('hw-cpu', 5);
+    const { w, dev, key, act, pick } = run('hw-cpu', 5);
     const slot = Object.entries(dev.slots).find(([, c]) => c?.failure)![0];
     act({ type: 'ticketTransition', key, to: 'In Progress' });
+    pick('CPU-X5-64C-2.4');
     act({ type: 'walk', to: dev.rackId! });
     act({ type: 'scanAsset', deviceId: dev.id });
     act({ type: 'esd', on: true });
@@ -161,7 +172,7 @@ describe('physical fasteners and aisles', () => {
     expect(w.penalties.filter((p) => p.rule === 'torque_sequence')).toEqual([]);
     act({ type: 'fastener', deviceId: dev.id, target: slot, id: 'frame', secure: false });
     act({ type: 'removePart', deviceId: dev.id, slot });
-    const idx = w.spares.findIndex((s) => s.component.partNumber === 'CPU-X5-64C-2.4');
+    const idx = w.spares.findIndex((s) => s.component.partNumber === 'CPU-X5-64C-2.4' && s.location === 'cart');
     act({ type: 'insertPart', deviceId: dev.id, slot, source: { spareIndex: idx }, aligned: true });
     expect(applyAction(w, { type: 'heatsink', deviceId: dev.id, cpu: slot, install: true }).message).toMatch(/load frame/);
     act({ type: 'fastener', deviceId: dev.id, target: slot, id: 'frame', secure: true });
@@ -187,10 +198,27 @@ describe('every hardware drill builds and is internally consistent', () => {
         expect(MODELS[dev.model].slots.find((s) => s.id === slot)).toBeTruthy();
         // SEL mentions the failed slot (symptom consistency)
         expect(dev.sel.some((e) => e.sensor.includes(slot) || e.sensor.includes('OCP') || e.sensor.includes('PCIe') || e.sensor.includes('CMOS'))).toBe(true);
-        // The correct part is on the cart
+        // The correct part is on the workroom shelves
         expect(inst.world.spares.some((s) => s.component.partNumber === dev.slots[slot]!.partNumber)).toBe(true);
         expect(evaluate(inst, 'practice').rating).toBe('Incomplete');
       }
     });
   }
+});
+
+describe('DCO workroom', () => {
+  it('spares start on the shelves and must be picked up; bins are only in the workroom', () => {
+    const def = hardwareScenarios.find((s) => s.id === 'hw-fan')!;
+    const inst = def.build(11, 'practice');
+    const w = inst.world;
+    expect(w.spares.every((s) => s.location === 'cage')).toBe(true);
+    const dev = w.devices[inst.focusDeviceId!];
+    applyAction(w, { type: 'walk', to: dev.rackId! });
+    expect(applyAction(w, { type: 'pickPart', spareIndex: 0 }).ok).toBe(false);
+    applyAction(w, { type: 'walk', to: 'cage' });
+    expect(applyAction(w, { type: 'pickPart', spareIndex: 0 }).ok).toBe(true);
+    expect(w.spares[0].location).toBe('cart');
+    expect(applyAction(w, { type: 'returnPart', spareIndex: 0 }).ok).toBe(true);
+    expect(w.spares[0].location).toBe('cage');
+  });
 });

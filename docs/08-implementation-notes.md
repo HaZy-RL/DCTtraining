@@ -89,6 +89,19 @@ export const myScenarios: ScenarioDef[] = [{
 * **Menus** use a bright theme (`body[data-theme='bright']`) with XP, levels, ranks, a streak, badges and stars
   (`app/progress.ts` → `rankOf`, `badgesOf`, `starsFor`). The play screen keeps the dark HUD over a bright data hall.
 
+## v0.3: DCO workroom, full racks, rendering
+
+* **DCO workroom** (`scenes/three/Workroom.tsx`) at the end of the hall, through a doorway. Locations `noc` (laptop desk)
+  and `cage` (shelves + RMA station) are both "in the room" (`inRoom()` in `actions.ts`). Shifts start at the desk.
+  The laptop (`play/Laptop.tsx`) is a tabbed browser with Jira, BMC, CMDB, inventory/RMA, PDU manager, etc.
+* **Spares live on shelves** (`SparePart.location === 'cage'`), one labelled bin per part kind with look-alikes mixed in.
+  `pickPart`/`returnPart` need you in the room; only parts on your cart can be installed. `bin` needs the RMA station.
+* **Racks are full**: 19 2U nodes U3–U40 per rack, 3-phase 415 V / 32 A PDUs (`Pdu.phases`), blanking panels in empty U.
+* **LOD**: only the selected / coached / cabling server is a full interactive model; the rest are one baked-texture box
+  with live LEDs (`LowServer`). Cable plugs and switch ports are detailed only in the focus rack.
+* **Look** (`scenes/three/Look.tsx`): environment lighting + N8AO + bloom (LEDs are pushed above 1.0) + SMAA + vignette,
+  shared by every 3D scene. Post-processing only runs on High quality.
+
 ## Known limitations / next steps
 
 * Vendor-specific BMC skins (iDRAC/iLO-style) are not built yet (planned per doc 07).

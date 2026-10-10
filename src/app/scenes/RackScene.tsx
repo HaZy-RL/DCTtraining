@@ -1,5 +1,5 @@
-import { Environment, Lightformer, OrbitControls } from '@react-three/drei';
-import { Bloom, EffectComposer } from '@react-three/postprocessing';
+import { OrbitControls } from '@react-three/drei';
+import { Look } from './three/Look';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
@@ -12,6 +12,8 @@ import { useStore } from '../store';
 import { blankTex, canvasTex, deviceOrigin, FRONT_RAIL_Z, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, U, uBaseY, ventTileTex } from './three/common';
 import { Cables, DummyRack, RackFrame, SwitchMesh } from './three/RackParts';
 import { ServerMesh } from './three/ServerMesh';
+import { ROOM, roomSpots, Workroom, SHELF_KINDS } from './three/Workroom';
+import type { ComponentKind } from '../../engine/types';
 import { notifyWalker, walker, useWalker } from './three/walker';
 
 const EYE = 16.5; // 1.65 m
@@ -45,7 +47,8 @@ function typingInField(): boolean {
 }
 
 /** First-person walking: WASD/arrows to move, drag to look, Shift to run. Reports rack/aisle zones to the sim. */
-function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }: { racks: Rack[]; origin: number; rowMinX: number; rowMaxX: number; hallMinX: number; hallMaxX: number }) {
+function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, roomX0 }: { racks: Rack[]; origin: number; rowMinX: number; rowMaxX: number; hallMinX: number; roomX0: number }) {
+  const hallMaxX = roomX0 + ROOM.depth;
   const { camera, gl } = useThree();
   const keys = useRef(new Set<string>());
   const lastNotify = useRef(0);
@@ -144,8 +147,18 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
       let nz = walker.z + (-cos * fwd - sin * strafe) * speed;
       nx = Math.max(hallMinX, Math.min(hallMaxX, nx));
       nz = Math.max(-WALL_Z, Math.min(WALL_Z, nz));
-      // the row of racks is solid: slide along it instead of walking through
       const r = 0.7;
+      // the workroom wall: you can only pass through the doorway
+      const inDoor = nz > ROOM.door[0] + r && nz < ROOM.door[1] - r;
+      if (walker.x < roomX0 && nx > roomX0 - r && !inDoor) nx = roomX0 - r;
+      if (walker.x >= roomX0 && nx < roomX0 + r && !inDoor) nx = roomX0 + r;
+      if (nx >= roomX0) {
+        nz = Math.max(ROOM.z0 + r, Math.min(ROOM.z1 - r, nz));
+        nx = Math.min(roomX0 + ROOM.depth - 5.6, nx); // shelving along the back wall
+        const desk = roomSpots(roomX0).desk;
+        if (Math.abs(nz - desk.z) < 3.4 && nx > desk.x - 7 && nx < roomX0 + 25) nz = desk.z + 3.4; // desk + RMA bench
+      }
+      // the row of racks is solid: slide along it instead of walking through
       if (nx > rowMinX - r && nx < rowMaxX + r && Math.abs(nz) < ROW_HALF + r) {
         const penX = Math.min(nx - (rowMinX - r), rowMaxX + r - nx);
         const penZ = ROW_HALF + r - Math.abs(nz);
@@ -159,7 +172,8 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
     camera.rotation.set(walker.pitch, walker.yaw, 0, 'YXZ');
     // which rack face am I standing at?
     let zone = `aisle:${walker.z >= 0 ? 'front' : 'rear'}`;
-    for (const rk of racks) {
+    if (walker.x >= roomX0) zone = walker.x < roomX0 + 13 ? 'noc:front' : 'cage:front';
+    else for (const rk of racks) {
       const rx = rackX(rk, origin);
       if (Math.abs(walker.x - rx) <= RACK_W / 2 + 0.4 && Math.abs(walker.z) >= ROW_HALF && Math.abs(walker.z) <= ROW_HALF + 6) {
         zone = `${rk.id}:${walker.z >= 0 ? 'front' : 'rear'}`;
@@ -184,9 +198,13 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, hallMaxX }:
 /** You, seen from the orbit camera. */
 function Avatar() {
   const wk = useWalker();
+  const g = useRef<THREE.Group>(null);
+  useFrame(({ camera }) => {
+    if (g.current) g.current.visible = camera.position.distanceTo(g.current.position) > 14;
+  });
   if (!wk.init) return null;
   return (
-    <group position={[wk.x, 0, wk.z]} rotation={[0, wk.yaw, 0]}>
+    <group ref={g} position={[wk.x, 0, wk.z]} rotation={[0, wk.yaw, 0]}>
       <mesh position={[0, 8.5, 0]} castShadow>
         <capsuleGeometry args={[1.5, 9, 6, 12]} />
         <meshStandardMaterial color="#2bb3a3" roughness={0.6} />
@@ -359,6 +377,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   for (let p = minP; p <= maxP; p++) if (!positions.includes(p)) dummies.push(p);
   const rowMinX = (minP - origin) * RACK_PITCH - RACK_W / 2;
   const rowMaxX = (maxP - origin) * RACK_PITCH + RACK_W / 2;
+  const roomX0 = rowMaxX + 26;
 
   const devices = useMemo(() => Object.values(w.devices).filter((d) => d.rackId && rackIds.has(d.rackId)), [w.devices, rackIds]);
   const cablesSig = useMemo(() => Object.values(w.cables).map((c) => `${c.a?.port}${c.b?.port}${c.condition}`).join() + devices.map((d) => d.power + d.os).join(), [w.cables, devices]);
@@ -377,8 +396,22 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       walker.pitch = -0.12;
       walker.zone = key;
       walker.init = true;
-    } else if (!walker.init || (loc !== 'aisle' && !r)) {
-      // Start of shift, or you went to the desk/cage: you come back in through the door at the end of the cold aisle.
+    } else if (loc === 'noc' || loc === 'cage') {
+      // In the DCO workroom: at the laptop desk, or in front of the shelves.
+      const sp = roomSpots(roomX0);
+      if (loc === 'noc') {
+        walker.x = sp.desk.x;
+        walker.z = sp.desk.z + 5.2;
+        walker.yaw = 0;
+      } else {
+        walker.x = roomX0 + 18;
+        walker.z = 2;
+        walker.yaw = -Math.PI / 2;
+      }
+      walker.pitch = -0.2;
+      walker.zone = `${loc}:front`;
+      walker.init = true;
+    } else if (!walker.init) {
       walker.x = rowMaxX + 8;
       walker.z = WALL_Z - 2;
       walker.yaw = Math.PI / 2 - 0.3;
@@ -450,7 +483,28 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     },
     [store],
   );
-  const onCable = useCallback((id: string) => !guard() && store().select({ cableId: id, rackId: store().sel.rackId }), [store]);
+  // Keep the camera on the server the cable plugs into (instead of flying back to the whole rack).
+  const onCable = useCallback(
+    (id: string) => {
+      if (guard()) return;
+      const st = store();
+      const c = st.world!.cables[id];
+      const ends = [c?.a, c?.b].filter(Boolean).map((e) => st.world!.devices[e!.deviceId]);
+      const srv = ends.find((d) => d?.role === 'server') ?? ends[0];
+      st.select({ cableId: id, deviceId: srv?.id ?? st.sel.deviceId, rackId: srv?.rackId ?? st.sel.rackId });
+      st.setCamMode('inspect');
+      if (st.view !== 'rear') st.setView('rear');
+    },
+    [store],
+  );
+  const onRoom = useCallback(
+    (room: string) => {
+      if (guard()) return;
+      store().select({ room });
+      store().setCamMode('inspect');
+    },
+    [store],
+  );
   const onU = useCallback((u: number) => !guard() && store().select({ rackId: focusRack.id, u }), [store, focusRack.id]);
 
   // camera goal (inspect mode)
@@ -472,13 +526,22 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       const t = o.clone().add(new THREE.Vector3(lay && !dev.servicePosition ? lay.x : 0, 0.4, rear ? -3.4 : 3.6)).add(left);
       return { target: t, pos: t.clone().add(new THREE.Vector3(rear ? -1.2 : 1.2, 1.6, 6.2 * dz)), key: `${dev.id}-${view}${k}-${lay ? sel.slot : ''}` };
     }
+    if (sel.room) {
+      const sp = roomSpots(roomX0);
+      if (sel.room.startsWith('shelf:')) {
+        const t = sp.shelf(sel.room.slice(6) as ComponentKind).clone().add(new THREE.Vector3(0, 0.5, 0));
+        return { target: t.add(new THREE.Vector3(0, 0, -1.5)), pos: t.clone().add(new THREE.Vector3(-13, 4.5, 4)), key: `${sel.room}${k}` };
+      }
+      const t = (sel.room === 'rma' ? sp.rma.clone().add(new THREE.Vector3(0, -1, 2)) : sp.desk.clone().add(new THREE.Vector3(0, 1, 0))).add(new THREE.Vector3(-1.5, 0, 0));
+      return { target: t, pos: t.clone().add(new THREE.Vector3(1, 5, 11)), key: `${sel.room}${k}` };
+    }
     if (sel.u) {
       const t = new THREE.Vector3(rx, uBaseY(sel.u), 4.9);
       return { target: t, pos: t.clone().add(new THREE.Vector3(2, 1.5, 7)), key: `u${sel.u}${k}` };
     }
     const t = new THREE.Vector3(rx, 9.5, 0);
     return { target: t, pos: new THREE.Vector3(rx + 3, 11, 24 * dz), key: `${focusRack.id}-${view}${k}` };
-  }, [sel.deviceId, sel.slot, sel.u, focusRack, origin, view, w.devices, w.racks, rackIds, camMode]);
+  }, [sel.deviceId, sel.slot, sel.u, sel.room, focusRack, origin, view, w.devices, w.racks, rackIds, camMode, roomX0]);
 
   const hl = mode === 'learn' && typeof w.meta.hlDevice === 'string' ? { dev: w.meta.hlDevice as string, slot: w.meta.hlSlot as string } : null;
   const xs = racks.map((r) => rackX(r, origin));
@@ -491,6 +554,14 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     const rear = gt?.side === 'rear';
     return o.add(new THREE.Vector3(0, 0.9, rear ? -4.3 : guideDev.servicePosition ? 0 : 4.3));
   }, [guideDev, gt?.side, origin, w.racks]);
+
+  const roomBeacon = useMemo(() => {
+    if (!gt?.room) return null;
+    const sp = roomSpots(roomX0);
+    const p = gt.room.startsWith('shelf:') ? sp.shelf(gt.room.slice(6) as ComponentKind) : gt.room === 'rma' ? sp.rma : sp.desk;
+    return p.clone().add(new THREE.Vector3(0, 2.5, 0));
+  }, [gt?.room, roomX0]);
+  void SHELF_KINDS;
 
   return (
     <Canvas
@@ -513,17 +584,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       {xs.map((x) => (
         <pointLight key={x} position={[x, 24, 10]} intensity={30} distance={30} color="#f4f8ff" />
       ))}
-      <Environment resolution={128} frames={1}>
-        <Lightformer intensity={2.2} position={[0, 30, 0]} rotation-x={Math.PI / 2} scale={[80, 20, 1]} />
-        <Lightformer intensity={1.2} position={[0, 10, 30]} scale={[80, 12, 1]} />
-        <Lightformer intensity={1.2} position={[0, 10, -30]} rotation-y={Math.PI} scale={[80, 12, 1]} />
-        <Lightformer intensity={0.6} color="#9fd3ff" position={[40, 10, 0]} rotation-y={-Math.PI / 2} scale={[40, 12, 1]} />
-      </Environment>
-      {quality === 'high' && (
-        <EffectComposer multisampling={4}>
-          <Bloom mipmapBlur luminanceThreshold={1.05} luminanceSmoothing={0.2} intensity={0.9} radius={0.6} />
-        </EffectComposer>
-      )}
+      <Look />
       <BlankingPanels racks={racks} origin={origin} buildRackId={buildMode ? focusRack.id : undefined} />
       <Hall minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} minP={minP} maxP={maxP} origin={origin} />
       {/* overhead cable trays */}
@@ -568,14 +629,16 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       })}
       <Cables w={w} originPos={origin} rackIds={rackIds} selCable={sel.cableId} onCable={onCable} detailRack={focusRack.id} />
       {beacon && <GuideBeacon position={beacon} />}
-      {camMode === 'inspect' && !sel.deviceId && <Avatar />}
+      {roomBeacon && <GuideBeacon position={roomBeacon} />}
+      <Workroom x0={roomX0} spares={w.spares} guide={gt?.room ? `room:${gt.room}`.replace('room:shelf', 'shelf') : undefined} onSelect={onRoom} />
+      {camMode === 'inspect' && !sel.deviceId && !sel.cableId && !sel.room && <Avatar />}
       {camMode === 'inspect' ? (
         <>
           <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI * 0.49} minDistance={2} maxDistance={70} />
           <CameraRig goal={goal} />
         </>
       ) : (
-        <WalkController racks={racks} origin={origin} rowMinX={rowMinX} rowMaxX={rowMaxX} hallMinX={rowMinX - 26} hallMaxX={rowMaxX + 26} />
+        <WalkController racks={racks} origin={origin} rowMinX={rowMinX} rowMaxX={rowMaxX} hallMinX={rowMinX - 26} roomX0={roomX0} />
       )}
     </Canvas>
   );

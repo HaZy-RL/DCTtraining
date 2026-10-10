@@ -5,6 +5,7 @@ import type { Hazard } from '../../engine/scenario';
 import { useStore } from '../store';
 import { DummyRack } from './three/RackParts';
 import { MAT, RACK_D } from './three/common';
+import { Look } from './three/Look';
 
 // Units here are meters; DummyRack is modelled in 10 cm units, so it is scaled by 0.1.
 const S = 0.1;
@@ -200,6 +201,7 @@ export default function HazardScene() {
       <Canvas camera={{ position: [4.6, 1.8, 0.4], fov: 60 }} shadows>
         <color attach="background" args={['#0a0e13']} />
         <ambientLight intensity={0.55} />
+        <Look aoRadius={0.3} aoIntensity={1.6} />
         <pointLight position={[0, 2.8, 0]} intensity={6} distance={8} />
         <pointLight position={[-2, 2.8, 0]} intensity={4} distance={6} />
         <directionalLight position={[3, 8, 5]} intensity={0.8} />

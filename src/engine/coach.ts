@@ -119,6 +119,13 @@ export function installPlan(w: World, id: string, slot: string, pn: string, oldS
   const fresh = !!p && p.serial !== oldSerial;
   const t = (sel: string): CoachTarget => ({ deviceId: id, rackId: d.rackId ?? undefined, side: def.access === 'rear' ? 'rear' : 'front', sel });
   const lines: CoachLine[] = [];
+  const room = w.trainee.location === 'noc' || w.trainee.location === 'cage';
+  const picked = fresh || w.spares.some((s) => s.location === 'cart' && s.component.partNumber === pn);
+  lines.push(
+    L('Walk to the DCO workroom at the end of the hall (spares live on its shelves)', picked || room, { room: 'walk' }),
+    L(`Take PN ${pn} off the ${KIND_LABEL[def.kind].toLowerCase()} shelf. Read the label: look-alikes share the bin`, picked, { room: `shelf:${def.kind}` }),
+    ...approach(w, id, def.access === 'rear' ? 'rear' : 'front').map((l) => (fresh ? { ...l, done: true } : l)),
+  );
   if (def.kind === 'cpu') lines.push(L('Open the socket load frame (lever unhooked)', fresh || !isTight(d, slot, 'frame'), t(`fastener:${slot}:frame`)));
   lines.push(L(`Install the spare with PN ${pn}. Read the label: look-alikes are on the cart`, fresh && p!.partNumber === pn, t(slot)));
   if (def.kind === 'dimm') lines[lines.length - 1].text += ' (line the notch up with the key)';

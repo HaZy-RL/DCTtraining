@@ -34,6 +34,8 @@ export interface Selection {
   rackId?: string;
   /** Build mode: a U position in the rack */
   u?: number;
+  /** DCO workroom object: 'laptop', 'rma', or 'shelf:<kind>'. */
+  room?: string;
 }
 
 interface State {
@@ -64,6 +66,8 @@ interface State {
   scanner: boolean;
   /** Last scan beam flash (for the 3D laser effect). */
   scanFx: { deviceId: string; at: number } | null;
+  /** The workroom laptop is open (full-screen tools). */
+  laptopOpen: boolean;
 
   go: (s: Screen) => void;
   start: (defId: string, mode: Mode, seed?: number) => void;
@@ -80,6 +84,7 @@ interface State {
   setCamMode: (m: 'inspect' | 'walk') => void;
   revealCoach: (stepId: string) => void;
   setScanner: (on: boolean) => void;
+  setLaptop: (open: boolean) => void;
   /** Pull the trigger at a device's asset-tag sticker. */
   scanTag: (deviceId: string) => void;
   select: (s: Selection) => void;
@@ -115,6 +120,7 @@ export const useStore = create<State>((set, get) => ({
   coachRevealed: {},
   scanner: false,
   scanFx: null,
+  laptopOpen: false,
 
   go: (screen) => {
     set({ screen });
@@ -158,6 +164,7 @@ export const useStore = create<State>((set, get) => ({
       coachRevealed: {},
       scanner: false,
       scanFx: null,
+      laptopOpen: false,
       screen: { name: 'play' },
     });
     if (inst.startTool === 'terminal') set({ panel: null });
@@ -232,6 +239,7 @@ export const useStore = create<State>((set, get) => ({
     if (w && w.racks[w.trainee.location ?? ''] && w.trainee.side !== side) get().dispatch({ type: 'walk', to: w.trainee.location!, side });
   },
   setCamMode: (camMode) => set({ camMode }),
+  setLaptop: (laptopOpen) => set({ laptopOpen }),
   setScanner: (scanner) => {
     set({ scanner });
     document.body.style.cursor = '';

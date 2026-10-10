@@ -9,6 +9,7 @@ import { SceneHost } from './SceneHost';
 import { SidePanel } from './SidePanel';
 import { TerminalDock } from './TerminalDock';
 import { Toasts } from './Toasts';
+import { Laptop } from './Laptop';
 
 function useClock() {
   const tick = useStore((s) => s.tick);
@@ -165,7 +166,7 @@ function Briefing() {
         <div className="card" style={{ background: 'var(--bg2)', fontSize: 13 }}>
           <b>How this works</b>
           <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-            <li>Tools are on the left: tickets, terminal (jump host), BMC web UI, CMDB, parts and notes.</li>
+            <li>Your shift starts in the <b>DCO workroom</b> at the end of the hall: the laptop there has Jira, the BMC console, CMDB and inventory. Spare parts sit on its shelves (pick up the right PN) and failed parts go in its RMA / shred bins. The left dock is your crash-cart laptop with the same tools.</li>
             <li>In the 3D view, click a server or part to inspect it. Press <b>🚶 Walk mode</b> (or V) to walk the hall yourself with WASD.</li>
             <li>Front and rear are different places: the cold aisle (front: drives, power button, slide-out rails) and the hot aisle (rear: PSUs, cords, network). Walking round costs time.</li>
             <li>Parts are physically held in: clips, latches, thumbscrews and screws. Click each one (in 3D or in the inspector) to release it, and secure it again when you're done.</li>
@@ -210,6 +211,7 @@ export default function PlayScreen() {
       </div>
       {panel && <SidePanel />}
       {shell && <TerminalDock />}
+      <Laptop />
       {showBriefing && <Briefing />}
       <AutoEnd />
     </div>

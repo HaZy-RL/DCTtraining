@@ -5,6 +5,7 @@ import { isTight } from '../../engine/fasteners';
 import { cableAt, hasAC, healthLed, linkState, locationOf, parseOutlet, pduLoadW, psuInput, slotLed } from '../../engine/projectors';
 import type { Cable, CableType, Component, Device, PortRef, World } from '../../engine/types';
 import { useStore } from '../store';
+import { locationLabel, ShelfList, TrayList, inRoom } from '../tools/PartsTool';
 
 function portName(p: string) {
   return p === 'nic0p0' ? 'P0' : p === 'nic0p1' ? 'P1' : p.toUpperCase();
@@ -67,7 +68,7 @@ function LocationBar() {
   const atRack = !!loc && !!w.racks[loc];
   return (
     <div className="row wrap" style={{ fontSize: 12, marginBottom: 6 }}>
-      <span className="muted">📍 {loc === 'noc' ? 'DCO desk' : loc === 'cage' ? 'Parts cage' : loc === 'aisle' ? 'Walking the hall' : loc ? w.racks[loc]?.location ?? loc : '—'}</span>
+      <span className="muted">📍 {locationLabel(loc, loc ? w.racks[loc]?.location : undefined)}</span>
       {atRack && (
         <button className="btn sm" title="Walk round the end of the row" onClick={() => goAisle(w.trainee.side === 'front' ? 'rear' : 'front')}>
           {w.trainee.side === 'front' ? '❄ cold aisle → go to hot aisle' : '🔥 hot aisle → go to cold aisle'}
@@ -115,6 +116,7 @@ export function Inspector({ buildMode }: { buildMode?: boolean }) {
       </div>
     );
   else if (sel.cableId && w.cables[sel.cableId]) body = <CableCard cable={w.cables[sel.cableId]} />;
+  else if (sel.room) body = <RoomCard room={sel.room} />;
   else if (buildMode && sel.u && sel.rackId) body = <UCard rackId={sel.rackId} u={sel.u} />;
   else if (sel.deviceId && w.devices[sel.deviceId]) {
     const dev = w.devices[sel.deviceId];
@@ -127,6 +129,58 @@ export function Inspector({ buildMode }: { buildMode?: boolean }) {
       {body}
     </div>
   );
+}
+
+// ---------- DCO workroom ----------
+
+function RoomCard({ room }: { room: string }) {
+  const w = useStore((s) => s.world!);
+  const dispatch = useStore((s) => s.dispatch);
+  const setLaptop = useStore((s) => s.setLaptop);
+  const here = inRoom(w.trainee.location);
+  const walk = !here && (
+    <button className="btn primary sm" onClick={() => dispatch({ type: 'walk', to: room === 'laptop' ? 'noc' : 'cage' })}>
+      🚶 Walk to the DCO workroom
+    </button>
+  );
+  if (room === 'laptop')
+    return (
+      <div>
+        <h4>💻 DCO laptop</h4>
+        <p style={{ fontSize: 12.5, margin: '4px 0' }}>Jira, the BMC console, CMDB, inventory/RMA and the PDU manager, all in one browser. Your crash-cart laptop (left dock) has the same tools when you're out on the floor.</p>
+        <div className="actions">
+          {walk}
+          <button className="btn sm primary" onClick={() => setLaptop(true)}>
+            Open laptop
+          </button>
+        </div>
+      </div>
+    );
+  if (room === 'rma')
+    return (
+      <div>
+        <h4>♻️ RMA station</h4>
+        <p style={{ fontSize: 12.5, margin: '4px 0' }}>
+          Blue tote = <b>RMA</b> (bagged + defect-tagged, back to the vendor). Locked grey box = <b>secure destruction</b> (every data-bearing drive, no exceptions). Green = <b>e-waste</b>.
+        </p>
+        {walk}
+        <TrayList />
+      </div>
+    );
+  if (room.startsWith('shelf:')) {
+    const kind = room.slice(6) as Parameters<typeof ShelfList>[0]['kind'];
+    return (
+      <div>
+        <h4>📦 {KIND_LABEL[kind!]} shelf</h4>
+        <p className="dim" style={{ fontSize: 12, margin: '2px 0 6px' }}>
+          Match the PN on the label to the ticket. Look-alikes share the shelf.
+        </p>
+        {walk}
+        <ShelfList kind={kind} />
+      </div>
+    );
+  }
+  return null;
 }
 
 // ---------- rack ----------
@@ -627,7 +681,12 @@ function SlotCard({ dev, slot }: { dev: Device; slot: string }) {
               {def.kind === 'dimm' ? 'I lined up the DIMM notch with the key in the slot' : 'I matched the gold pin-1 triangle on the CPU with the socket mark'}
             </label>
           )}
-          {candidates.length === 0 && <div className="dim" style={{ fontSize: 12 }}>No matching parts on your cart or in your tray.</div>}
+          {candidates.length === 0 && (
+            <div className="dim" style={{ fontSize: 12 }}>
+              No matching parts on your cart or in your tray.{' '}
+              {w.spares.some((sp) => sp.location === 'cage' && sp.component.kind === def.kind) && <>Spares are on the {KIND_LABEL[def.kind].toLowerCase()} shelf in the DCO workroom.</>}
+            </div>
+          )}
           {candidates.map((x) => (
             <div key={x.c.uid} className="row" style={{ fontSize: 12, margin: '3px 0' }}>
               <span className="grow mono">

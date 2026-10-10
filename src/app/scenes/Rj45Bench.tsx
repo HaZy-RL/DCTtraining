@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { useMemo, useState } from 'react';
 import { Rng } from '../../engine/rng';
 import { useStore } from '../store';
+import { Look } from './three/Look';
 
 const WIRES = ['W/O', 'O', 'W/G', 'B', 'W/B', 'G', 'W/Br', 'Br'] as const; // T568B
 const T568A = ['W/G', 'G', 'W/O', 'B', 'W/B', 'O', 'W/Br', 'Br'];
@@ -142,6 +143,7 @@ export default function Rj45Bench() {
         <Canvas camera={{ position: [3.4, 2.4, 4.2], fov: 38 }}>
           <color attach="background" args={['#0d1218']} />
           <ambientLight intensity={0.7} />
+          <Look aoRadius={0.1} aoIntensity={1.6} />
           <directionalLight position={[3, 5, 4]} intensity={1.2} />
           <Plug3D order={order} untwist={untwist} crimped={!!flags[`rj45:crimped:${end}`] && phase !== 'arrange'} stripped={strip} />
           <OrbitControls makeDefault enablePan={false} target={[0, 0, 0.3]} />

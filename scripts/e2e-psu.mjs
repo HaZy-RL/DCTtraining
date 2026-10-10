@@ -54,6 +54,21 @@ try {
   await click(/Pull PSU out/);
   await page.waitForTimeout(450);
   await shot('30a-psu-sliding-out');
+  // fetch the spare from the workroom shelves, then come back round to the hot aisle
+  await S((pn) => {
+    const st = window.__DCT__.getState();
+    st.dispatch({ type: 'walk', to: 'cage' });
+    st.select({ room: 'shelf:psu' });
+  }, info.pn);
+  await page.waitForTimeout(2500);
+  await shot('30b-parts-shelf');
+  await page.locator('.inspector .tk', { hasText: info.pn }).filter({ hasText: 'shelf' }).first().getByRole('button', { name: 'Pick up' }).click();
+  await S((i) => {
+    const st = window.__DCT__.getState();
+    st.dispatch({ type: 'walk', to: i.rack, side: 'rear' });
+    st.select({ deviceId: i.dev, rackId: i.rack, slot: i.slot });
+  }, info);
+  await page.waitForTimeout(800);
   // install the matching spare
   const row = page.locator('.inspector .row', { hasText: info.pn }).first();
   await row.getByRole('button', { name: 'Install' }).click();
@@ -72,6 +87,17 @@ try {
   await click('Sensors');
   await click('Event Log');
   await click(/Clear log/);
+  await S(() => {
+    const st = window.__DCT__.getState();
+    st.dispatch({ type: 'walk', to: 'noc' });
+    st.select({ room: 'laptop' });
+  });
+  await page.waitForTimeout(2500);
+  await shot('31a-workroom-desk');
+  await click('Open laptop');
+  await page.waitForTimeout(500);
+  await shot('31b-laptop');
+  await page.locator('.lp-close').click();
   await page.locator('.dock button', { hasText: 'Parts' }).click();
   await click('ESD bag');
   await click('Defect tag');

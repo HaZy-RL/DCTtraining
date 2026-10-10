@@ -51,6 +51,11 @@ export function selectionFor(sel?: string): string | undefined {
 export function showTarget(t: CoachTarget | undefined) {
   if (!t) return;
   const st = useStore.getState();
+  if (t.room) {
+    st.select({ room: t.room });
+    st.setCamMode('inspect');
+    return;
+  }
   if (t.tool) {
     if (t.tool === 'terminal') st.toggleTerminal(true);
     else st.setPanel(t.tool as Panel);
@@ -69,9 +74,10 @@ export function showTarget(t: CoachTarget | undefined) {
 
 /** Approach lines ("walk to the rack / go round to the hot aisle") can be done with one click. */
 export function walkTargetPending(t: CoachTarget | undefined): { to: string; side: 'front' | 'rear' } | null {
-  if (!t?.rackId || !t.side || t.sel) return null;
   const w = useStore.getState().world;
-  if (!w) return null;
+  if (!w || !t) return null;
+  if (t.room === 'walk') return w.trainee.location === 'noc' || w.trainee.location === 'cage' ? null : { to: 'cage', side: 'front' };
+  if (!t.rackId || !t.side || t.sel) return null;
   if (w.trainee.location === t.rackId && w.trainee.side === t.side) return null;
   return { to: t.rackId, side: t.side };
 }

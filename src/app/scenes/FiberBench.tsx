@@ -2,6 +2,7 @@ import { OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { Look } from './three/Look';
 
 function LcDuplex({ capOn, inserted, flipped }: { capOn: boolean; inserted: boolean; flipped: boolean }) {
   return (
@@ -113,6 +114,7 @@ export default function FiberBench() {
         <Canvas camera={{ position: [0.4, 1.0, 3.2], fov: 40 }}>
           <color attach="background" args={['#0d1218']} />
           <ambientLight intensity={0.7} />
+          <Look aoRadius={0.08} aoIntensity={1.6} />
           <directionalLight position={[3, 5, 4]} intensity={1.2} />
           <LcDuplex capOn={capOn} inserted={inserted} flipped={flipped} />
           <Optic />

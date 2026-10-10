@@ -27,6 +27,9 @@ export type Action =
   | { type: 'powerButton'; deviceId: string; hold?: boolean }
   | { type: 'cord'; deviceId: string; psu: string; outlet: string | null }
   | { type: 'reseatCord'; deviceId: string; psu: string }
+  /** Workroom shelves: take a spare off its shelf bin onto your cart (or put it back). */
+  | { type: 'pickPart'; spareIndex: number }
+  | { type: 'returnPart'; spareIndex: number }
   | { type: 'bag'; uid: string }
   | { type: 'tag'; uid: string }
   | { type: 'bin'; uid: string; bin: BinKind }
@@ -72,6 +75,8 @@ export type Action =
 const DUR: Partial<Record<Action['type'], number>> = {
   esd: 5,
   fastener: 4,
+  pickPart: 15,
+  returnPart: 10,
   scanAsset: 5,
   servicePosition: 15,
   layer: 10,
@@ -127,6 +132,11 @@ function atDevice(w: World, dev: Device): string | null {
 }
 
 const AISLE = { front: 'cold aisle (front)', rear: 'hot aisle (rear)' } as const;
+
+/** The DCO workroom: laptop desk ('noc') and parts shelves / RMA station ('cage') share one room. */
+export function inRoom(loc: string | null | undefined): boolean {
+  return loc === 'noc' || loc === 'cage';
+}
 
 function needSide(w: World, dev: Device, side: Side, what = 'That'): string | null {
   if (!dev.rackId || w.trainee.side === side) return null;
@@ -267,20 +277,13 @@ function reduce(w: World, a: Action): ActionResult {
       const to = w.racks[a.to];
       let secs = 60;
       if (fr && to) secs = 20 + Math.abs(fr.position - to.position) * 4 + (fr.row === to.row ? 0 : 30);
-      if (a.to === 'cage' || from === 'cage') secs = 120;
+      if (inRoom(a.to) || (from && inRoom(from))) secs = 90;
+      if (inRoom(a.to) && from && inRoom(from)) secs = 5;
       advance(w, secs);
       w.trainee.location = a.to;
       flag(w, `at:${a.to}`);
-      if (a.to === 'cage') {
-        const picked = w.spares.filter((sp) => sp.location === 'cage');
-        for (const sp of picked) sp.location = 'cart';
-        if (picked.length) {
-          flag(w, 'picked_up_part');
-          toast(w, 'success', `Scanned out ${picked.length} part(s) from the cage onto your cart.`);
-        }
-      }
       if (to) flag(w, `side:${a.to}:${side}`);
-      return ok(`Walked to ${to ? `${to.location}, ${AISLE[side]}` : a.to === 'noc' ? 'the DCO desk' : a.to === 'cage' ? 'the parts cage' : a.to} (${secs}s).`);
+      return ok(`Walked to ${to ? `${to.location}, ${AISLE[side]}` : a.to === 'noc' ? 'the laptop desk in the DCO workroom' : a.to === 'cage' ? 'the parts shelves in the DCO workroom' : a.to} (${secs}s).`);
     }
     case 'arrive': {
       w.trainee.location = a.to;
@@ -528,7 +531,7 @@ function reduce(w: World, a: Action): ActionResult {
         part = w.trainee.tray.find((p) => p.uid === uid);
       }
       if (!part) return err('No such part.');
-      if (fromSpare >= 0 && w.spares[fromSpare].location === 'cage') return err('That part is still in the parts cage. Walk to the cage and scan it out first.');
+      if (fromSpare >= 0 && w.spares[fromSpare].location === 'cage') return err('That spare is still on its shelf in the DCO workroom. Walk there and pick it up first.');
       const fit = fitsSlot(dev, a.slot, part.partNumber);
       if (!fit.ok) {
         if (partSpec(part.partNumber).kind === def.kind) penalize(w, 'wrong_form_factor', 2, `Tried to force a part that doesn't fit: ${fit.why}`, { key: part.partNumber });
@@ -631,6 +634,22 @@ function reduce(w: World, a: Action): ActionResult {
       }
       return ok(`Reseated the ${a.psu} power cord. It was already secure.`);
     }
+    case 'pickPart':
+    case 'returnPart': {
+      const sp = w.spares[a.spareIndex];
+      if (!sp) return err('No such part.');
+      if (!inRoom(w.trainee.location)) return err('Spares live on the shelves in the DCO workroom at the end of the hall. Walk there first.');
+      if (a.type === 'pickPart') {
+        if (sp.location === 'cart') return ok('Already on your cart.');
+        sp.location = 'cart';
+        flag(w, 'picked_up_part');
+        flag(w, `picked:${sp.component.partNumber}`);
+        return ok(`Scanned PN ${sp.component.partNumber} (S/N ${sp.component.serial}) out of inventory and put it on your cart.`);
+      }
+      if (sp.location === 'cage') return ok('Already on the shelf.');
+      sp.location = 'cage';
+      return ok(`Put PN ${sp.component.partNumber} back on its shelf and scanned it back into inventory.`);
+    }
     case 'bag': {
       const p = w.trainee.tray.find((x) => x.uid === a.uid);
       if (!p) return err('Not in your tray.');
@@ -647,6 +666,7 @@ function reduce(w: World, a: Action): ActionResult {
       const i = w.trainee.tray.findIndex((x) => x.uid === a.uid);
       if (i < 0) return err('Not in your tray.');
       const p = w.trainee.tray[i];
+      if (!inRoom(w.trainee.location)) return err('The RMA bins and the locked secure-destruction bin are in the DCO workroom. Walk there first.');
       if (p.dataBearing && a.bin !== 'secure_destruction') {
         penalize(w, 'data_bearing_rma', 20, `Sent a data-bearing ${p.kind.toUpperCase()} (S/N ${p.serial}) to ${a.bin === 'rma' ? 'RMA' : 'e-waste'}. Drives NEVER leave the site — secure destruction only`, { safety: true, key: p.uid });
       }

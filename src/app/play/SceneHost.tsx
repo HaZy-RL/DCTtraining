@@ -29,6 +29,8 @@ function SceneControls() {
       const el = document.activeElement as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       const st = useStore.getState();
+      if (e.key === 'Escape' && st.laptopOpen) return st.setLaptop(false);
+      if (st.laptopOpen) return;
       if (e.key === 'v' || e.key === 'V') st.setCamMode(st.camMode === 'walk' ? 'inspect' : 'walk');
       else if (e.key === 'Escape' && st.scanner) st.setScanner(false);
       else if (e.key === 'Escape' && st.camMode === 'walk') st.setCamMode('inspect');

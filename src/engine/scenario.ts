@@ -26,6 +26,8 @@ export interface CoachTarget {
   sel?: string;
   side?: 'front' | 'rear';
   tool?: ToolId;
+  /** DCO workroom object: 'laptop', 'rma', 'shelf:<kind>'. */
+  room?: string;
 }
 
 /** One physical/UI micro-action in the coach checklist. */

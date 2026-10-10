@@ -37,14 +37,14 @@ export function makeTicket(w: World, rng: Rng, dev: Device | null, t: Partial<Ti
   return tk;
 }
 
-/** Put the right part plus look-alike decoys on the parts cart (shuffled). */
+/** Put the right part plus look-alike decoys on the workroom shelves (shuffled). The tech picks the right one up. */
 export function stockCart(w: World, rng: Rng, pn: string, opts: { decoys?: number; qty?: number } = {}) {
   const parts = [];
   for (let i = 0; i < (opts.qty ?? 1); i++) parts.push(pn);
   const decoys = rng.shuffle(decoysFor(pn)).slice(0, opts.decoys ?? 2);
   for (const d of [...parts, ...decoys]) {
     const c = makeComponent(rng, d);
-    w.spares.push({ component: c, label: `${partSpec(d).desc}  [PN ${d}]`, location: 'cart' });
+    w.spares.push({ component: c, label: `${partSpec(d).desc}  [PN ${d}]`, location: 'cage' });
   }
   w.spares = rng.shuffle(w.spares);
 }
@@ -353,7 +353,8 @@ export function repairSteps(c: RepairCtx): Step[] {
         return [
           L(`📦 Parts → find S/N ${c.oldSerial} in your tray → "ESD bag"`, binned || !!p?.bagged, { tool: 'parts' }),
           ...(dataBearing ? [] : [L('Press "Defect tag" (ticket #, failure reason)', binned || !!p?.tagged, { tool: 'parts' })]),
-          L(dataBearing ? 'Drop it in 🔒 Secure destruction. Drives never go back to the vendor' : 'Drop it in the RMA bin', binned, { tool: 'parts' }),
+          L('Walk to the RMA station in the DCO workroom', binned || w.trainee.location === 'noc' || w.trainee.location === 'cage', { room: 'walk' }),
+          L(dataBearing ? 'Drop it in the locked 🔒 SHRED box. Drives never go back to the vendor' : 'Drop it in the blue RMA tote', binned, { room: 'rma' }),
         ];
       },
       points: 6,

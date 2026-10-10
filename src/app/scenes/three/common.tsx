@@ -630,3 +630,32 @@ export function pduTex(side: 'A' | 'B'): THREE.CanvasTexture {
     for (let i = 0; i < 24; i++) g.fillRect(6, 512 - (40 + i * 19.5), 20, 13);
   });
 }
+
+/** Top label of a 3.5" HDD / U.2 SSD: vendor-neutral spec block, barcode, warnings. */
+export function driveLabelTex(kind: 'hdd' | 'nvme'): THREE.CanvasTexture {
+  return canvasTex(`drvlabel${kind}`, 256, 384, (g) => {
+    g.fillStyle = kind === 'hdd' ? '#eef0f2' : '#1d2026';
+    g.fillRect(0, 0, 256, 384);
+    g.fillStyle = kind === 'hdd' ? '#111' : '#e6eaf2';
+    g.font = 'bold 30px sans-serif';
+    g.fillText(kind === 'hdd' ? '20TB' : '7.68TB', 16, 44);
+    g.font = '16px monospace';
+    const lines = kind === 'hdd' ? ['SATA 6Gb/s  7200 RPM', '512e  ·  3.5"', 'HDD-20T-SATA-7K2', '+5V 0.6A  +12V 0.7A'] : ['NVMe U.2  PCIe Gen4 x4', '2.5"  ·  15 mm', 'NVME-7T68-U2-G4', '+12V 2.1A'];
+    lines.forEach((l, i) => g.fillText(l, 16, 80 + i * 24));
+    let x = 16;
+    let h = kind === 'hdd' ? 99 : 7;
+    while (x < 236) {
+      h = (h * 1103515245 + 12345) >>> 0;
+      const w = 2 + (h % 3) * 1.5;
+      g.fillRect(x, 190, w, 60);
+      x += w + 2 + ((h >> 4) % 3);
+    }
+    g.fillStyle = kind === 'hdd' ? '#c0392b' : '#f6ad55';
+    g.fillRect(16, 270, 224, 4);
+    g.font = 'bold 13px sans-serif';
+    g.fillText('ESD SENSITIVE · DATA-BEARING', 16, 296);
+    g.fillStyle = kind === 'hdd' ? '#555' : '#8b95a9';
+    g.font = '12px monospace';
+    g.fillText('Made in a fictional fab · no vendor marks', 16, 360);
+  });
+}

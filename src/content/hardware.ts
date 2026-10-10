@@ -50,7 +50,7 @@ export const hardwareScenarios: ScenarioDef[] = DRILLS.map((d) => ({
     const ticket = makeTicket(s.w, s.rng, dev, {
       priority: d.kind === 'psu' || d.kind === 'fan' ? 'P2' : 'P3',
       summary: `[HW] ${KIND_LABEL[d.kind]} ${slot} — replace | ${dev.hostname}`,
-      description: `${d.symptom(slot)}\n\nComponent: ${slot}\nFailed part: ${partSpec(part.partNumber).desc}\nPart number: ${part.partNumber}\nComponent S/N: ${part.serial}\n\nSpare has been staged on the parts cart at the end of row ${s.w.racks[s.rackId].row}.`,
+      description: `${d.symptom(slot)}\n\nComponent: ${slot}\nFailed part: ${partSpec(part.partNumber).desc}\nPart number: ${part.partNumber}\nComponent S/N: ${part.serial}\n\nSpare is on the ${KIND_LABEL[d.kind].toLowerCase()} shelf in the DCO workroom at the end of the hall.`,
       labels: ['auto-generated', d.kind],
       hostState: def.hotSwap ? 'Drained' : 'In Production',
     });
