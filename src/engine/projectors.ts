@@ -76,7 +76,7 @@ export function pduLoadW(world: World, pduId: string): number {
 }
 
 export function pduCapacityW(p: Pdu): number {
-  return p.breakerAmps * p.volts;
+  return Math.round(p.breakerAmps * p.volts * (p.phases === 3 ? Math.sqrt(3) : 1));
 }
 /** NEC/80% continuous-load rule. */
 export function pduDeratedW(p: Pdu): number {

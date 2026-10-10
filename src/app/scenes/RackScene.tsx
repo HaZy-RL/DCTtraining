@@ -1,4 +1,5 @@
-import { OrbitControls } from '@react-three/drei';
+import { Environment, Lightformer, OrbitControls } from '@react-three/drei';
+import { Bloom, EffectComposer } from '@react-three/postprocessing';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
@@ -8,7 +9,7 @@ import { isTight } from '../../engine/fasteners';
 import type { PortRef, Rack } from '../../engine/types';
 import { useCoach } from '../play/guide';
 import { useStore } from '../store';
-import { canvasTex, deviceOrigin, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, uBaseY } from './three/common';
+import { blankTex, canvasTex, deviceOrigin, FRONT_RAIL_Z, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, U, uBaseY, ventTileTex } from './three/common';
 import { Cables, DummyRack, RackFrame, SwitchMesh } from './three/RackParts';
 import { ServerMesh } from './three/ServerMesh';
 import { notifyWalker, walker, useWalker } from './three/walker';
@@ -247,6 +248,13 @@ function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; 
         <planeGeometry args={[len, WALL_Z * 2 + 24]} />
         <meshStandardMaterial map={tex} roughness={0.9} metalness={0.05} />
       </mesh>
+      {/* perforated cold-aisle tiles in front of every rack */}
+      {dummyRow.map((p) => (
+        <mesh key={`vt${p}`} rotation={[-Math.PI / 2, 0, 0]} position={[(p - origin) * RACK_PITCH, 0.012, ROW_HALF + 3.2]} receiveShadow>
+          <planeGeometry args={[5.9, 5.9]} />
+          <meshStandardMaterial map={ventTileTex()} roughness={0.8} metalness={0.2} />
+        </mesh>
+      ))}
       {/* yellow safety lines along the aisles */}
       {[ROW_HALF + 0.6, -(ROW_HALF + 0.6)].map((z) => (
         <mesh key={z} rotation={[-Math.PI / 2, 0, 0]} position={[midX, 0.02, z]}>
@@ -263,7 +271,7 @@ function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; 
         [-OPPOSITE_Z / 2 - 3, OPPOSITE_Z / 2 + 3].map((z) => (
           <mesh key={`${i}${z}`} position={[midX - len / 2 + 6 + i * 12, 30.9, z]} rotation={[Math.PI / 2, 0, 0]}>
             <planeGeometry args={[7, 1.4]} />
-            <meshBasicMaterial color="#ffffff" toneMapped={false} />
+            <meshBasicMaterial color={[1.6, 1.65, 1.7]} toneMapped={false} />
           </mesh>
         )),
       )}
@@ -294,6 +302,33 @@ function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; 
             side={THREE.DoubleSide}
             toneMapped={false}
           />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** Perforated blanking panels in every empty U so a full rack looks (and breathes) like a real one. */
+function BlankingPanels({ racks, origin, buildRackId }: { racks: Rack[]; origin: number; buildRackId?: string }) {
+  const devices = useStore((s) => s.world!.devices);
+  const rails = racks.map((r) => r.rails);
+  const panels = useMemo(() => {
+    const out: Array<{ key: string; x: number; y: number }> = [];
+    for (const r of racks) {
+      if (r.id === buildRackId) continue;
+      const used = new Set<number>();
+      for (const d of Object.values(devices)) if (d.rackId === r.id && d.u != null) for (let i = 0; i < d.heightU; i++) used.add(d.u + i);
+      for (const [uStr, rl] of Object.entries(r.rails)) for (let i = 0; i < rl.heightU; i++) used.add(Number(uStr) + i);
+      for (let u = 1; u <= r.heightU; u++) if (!used.has(u)) out.push({ key: `${r.id}${u}`, x: rackX(r, origin), y: uBaseY(u) + U / 2 });
+    }
+    return out;
+  }, [racks, devices, origin, buildRackId, rails]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <group>
+      {panels.map((p) => (
+        <mesh key={p.key} position={[p.x, p.y, FRONT_RAIL_Z + 0.06]} raycast={() => null}>
+          <planeGeometry args={[4.6, U * 0.96]} />
+          <meshStandardMaterial map={blankTex()} metalness={0.6} roughness={0.5} />
         </mesh>
       ))}
     </group>
@@ -362,6 +397,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       if (guard()) return;
       const d = store().world!.devices[id];
       store().select({ deviceId: id, rackId: d.rackId ?? undefined });
+      store().setCamMode('inspect');
     },
     [store],
   );
@@ -370,6 +406,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       if (guard()) return;
       const d = store().world!.devices[id];
       store().select({ deviceId: id, slot, rackId: d.rackId ?? undefined });
+      store().setCamMode('inspect');
       const def = MODELS[d.model].slots.find((s) => s.id === slot);
       if (def) store().unlockCodex(`kind:${def.kind}`);
       if (slot === 'PSU1' || slot === 'PSU2') store().unlockCodex('tool:pdu');
@@ -476,6 +513,18 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       {xs.map((x) => (
         <pointLight key={x} position={[x, 24, 10]} intensity={30} distance={30} color="#f4f8ff" />
       ))}
+      <Environment resolution={128} frames={1}>
+        <Lightformer intensity={2.2} position={[0, 30, 0]} rotation-x={Math.PI / 2} scale={[80, 20, 1]} />
+        <Lightformer intensity={1.2} position={[0, 10, 30]} scale={[80, 12, 1]} />
+        <Lightformer intensity={1.2} position={[0, 10, -30]} rotation-y={Math.PI} scale={[80, 12, 1]} />
+        <Lightformer intensity={0.6} color="#9fd3ff" position={[40, 10, 0]} rotation-y={-Math.PI / 2} scale={[40, 12, 1]} />
+      </Environment>
+      {quality === 'high' && (
+        <EffectComposer multisampling={4}>
+          <Bloom mipmapBlur luminanceThreshold={1.05} luminanceSmoothing={0.2} intensity={0.9} radius={0.6} />
+        </EffectComposer>
+      )}
+      <BlankingPanels racks={racks} origin={origin} buildRackId={buildMode ? focusRack.id : undefined} />
       <Hall minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} minP={minP} maxP={maxP} origin={origin} />
       {/* overhead cable trays */}
       <mesh position={[((minP + maxP) / 2 - origin) * RACK_PITCH, 21.8, -3]} material={MAT.post}>
@@ -501,7 +550,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
               dev={d}
               rack={r}
               x={x}
-              lod={r.id === focusRack.id || r.id === w.trainee.location ? 'full' : 'low'}
+              lod={sel.deviceId === d.id || guideDev?.id === d.id || pendingPort?.deviceId === d.id || hl?.dev === d.id ? 'full' : 'low'}
               detail={sel.deviceId === d.id}
               selected={sel.deviceId === d.id}
               selSlot={sel.deviceId === d.id ? sel.slot : undefined}
@@ -515,9 +564,9 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
               onLatch={onLatch}
             />
           );
-        return <SwitchMesh key={d.id} dev={d} x={x} selected={sel.deviceId === d.id} pendingPort={pendingPort?.deviceId === d.id ? pendingPort.port : null} onDevice={onDevice} onPort={onPort} cablesSig={cablesSig} />;
+        return <SwitchMesh key={d.id} lod={r.id === focusRack.id ? 'full' : 'low'} dev={d} x={x} selected={sel.deviceId === d.id} pendingPort={pendingPort?.deviceId === d.id ? pendingPort.port : null} onDevice={onDevice} onPort={onPort} cablesSig={cablesSig} />;
       })}
-      <Cables w={w} originPos={origin} rackIds={rackIds} selCable={sel.cableId} onCable={onCable} />
+      <Cables w={w} originPos={origin} rackIds={rackIds} selCable={sel.cableId} onCable={onCable} detailRack={focusRack.id} />
       {beacon && <GuideBeacon position={beacon} />}
       {camMode === 'inspect' && !sel.deviceId && <Avatar />}
       {camMode === 'inspect' ? (

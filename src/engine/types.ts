@@ -145,6 +145,8 @@ export interface Pdu {
   side: 'A' | 'B';
   breakerAmps: number;
   volts: number;
+  /** 3-phase PDUs deliver √3 × V × A. */
+  phases?: 1 | 3;
   outlets: number;
   /** outlet index -> tripped etc */
   breakerTripped: boolean;

@@ -75,6 +75,16 @@ export function outletWorld(w: World, outlet: string, originPos: number): THREE.
 // ---------- LEDs ----------
 
 const LED_COLORS: Record<string, string> = { green: '#2bff6a', amber: '#ffae2b', blue: '#3d8bff', red: '#ff3b3b', off: '#1a1a1a' };
+const ledCache = new Map<string, THREE.Color>();
+/** LEDs are pushed above 1.0 so the bloom pass picks them (and only them) up. */
+function ledColor(c: string): THREE.Color {
+  let col = ledCache.get(c);
+  if (!col) {
+    col = new THREE.Color(LED_COLORS[c]).multiplyScalar(c === 'off' ? 1 : 3.2);
+    ledCache.set(c, col);
+  }
+  return col;
+}
 
 export function Led({ state, position, size = 0.05, period = 1 }: { state: LedState | 'red' | 'blue'; position: [number, number, number]; size?: number; period?: number }) {
   const mat = useRef<THREE.MeshBasicMaterial>(null);
@@ -94,7 +104,7 @@ export function Led({ state, position, size = 0.05, period = 1 }: { state: LedSt
   return (
     <mesh position={position}>
       <sphereGeometry args={[size, 10, 8]} />
-      <meshBasicMaterial ref={mat} color={LED_COLORS[color]} transparent toneMapped={false} />
+      <meshBasicMaterial ref={mat} color={ledColor(color)} transparent toneMapped={false} />
     </mesh>
   );
 }
@@ -438,4 +448,185 @@ export function SlideAnim<T>({ item, dir, dist = 1, speed = 1.6, children }: { i
   });
   if (!shown) return null;
   return <group ref={g}>{children(shown)}</group>;
+}
+
+/** Blanking panel: perforated steel filler for an empty U (keeps hot exhaust from recirculating). */
+export function blankTex(): THREE.CanvasTexture {
+  return canvasTex('blank', 256, 32, (g) => {
+    g.fillStyle = '#1b1f25';
+    g.fillRect(0, 0, 256, 32);
+    g.fillStyle = '#0a0c0f';
+    for (let x = 30; x < 226; x += 7) for (let y = 9; y < 26; y += 7) g.fillRect(x, y, 4, 4);
+    g.fillStyle = '#3a414b';
+    g.fillRect(0, 0, 256, 2);
+  });
+}
+
+/** Perforated raised-floor tile that blows cold air up in front of the racks. */
+export function ventTileTex(): THREE.CanvasTexture {
+  return canvasTex('venttile', 256, 256, (g) => {
+    g.fillStyle = '#b9c0c8';
+    g.fillRect(0, 0, 256, 256);
+    g.fillStyle = '#5d6670';
+    for (let x = 14; x < 244; x += 11) for (let y = 14; y < 244; y += 11) g.fillRect(x, y, 6, 6);
+    g.strokeStyle = '#8a939d';
+    g.lineWidth = 6;
+    g.strokeRect(3, 3, 250, 250);
+  });
+}
+
+/** Rack post: square cage-nut holes, three per U. */
+export function postTex(): THREE.CanvasTexture {
+  return canvasTex(
+    'post',
+    32,
+    96,
+    (g) => {
+      g.fillStyle = '#2b3038';
+      g.fillRect(0, 0, 32, 96);
+      g.fillStyle = '#07080a';
+      for (let i = 0; i < 3; i++) g.fillRect(10, 8 + i * 32, 12, 12);
+    },
+    [1, 42],
+  );
+}
+
+function drawRackFace(g: CanvasRenderingContext2D, emissive: boolean, rear: boolean, seed: number) {
+  const W = 256;
+  const Hh = 1024;
+  g.fillStyle = emissive ? '#000' : '#14171c';
+  g.fillRect(0, 0, W, Hh);
+  const uH = Hh / 44; // 42U + top/bottom
+  let r = seed;
+  const rnd = () => ((r = (r * 1103515245 + 12345) >>> 0) % 1000) / 1000;
+  const unit = (u: number, h: number) => Hh - (u + h) * uH;
+  // switches at U41/U42
+  for (const u of [41, 42]) {
+    const y = unit(u, 1);
+    if (!emissive) {
+      g.fillStyle = '#20262e';
+      g.fillRect(20, y + 1, W - 40, uH - 2);
+      g.fillStyle = '#050607';
+      for (let p = 0; p < 24; p++) g.fillRect(30 + p * 8, y + 4, 6, uH - 8);
+    } else {
+      g.fillStyle = '#2bff6a';
+      for (let p = 0; p < 24; p++) if (rnd() > 0.2) g.fillRect(31 + p * 8, y + 3, 3, 2);
+    }
+  }
+  for (let u = 3; u <= 39; u += 2) {
+    const y = unit(u, 2);
+    if (!emissive) {
+      g.fillStyle = '#3a414b';
+      g.fillRect(20, y + 1, W - 40, uH * 2 - 2);
+      if (!rear) {
+        g.fillStyle = '#2b3038';
+        for (let b = 0; b < 8; b++) g.fillRect(26 + b * 22, y + 4, 18, uH * 2 - 8);
+        g.fillStyle = '#e57a22';
+        for (let b = 0; b < 8; b++) g.fillRect(29 + b * 22, y + uH * 2 - 10, 12, 4);
+      } else {
+        g.fillStyle = '#1b1f25';
+        g.fillRect(170, y + 3, 60, uH * 2 - 6);
+        g.fillStyle = '#d9b72b';
+        g.fillRect(90, y + 8, 3, uH);
+      }
+    } else {
+      g.fillStyle = rnd() > 0.93 ? '#ffae2b' : '#2bff6a';
+      g.fillRect(rear ? 222 : 220, y + 5, 4, 4);
+      g.fillStyle = '#2bff6a';
+      if (!rear) for (let b = 0; b < 8; b++) if (rnd() > 0.3) g.fillRect(36 + b * 22, y + 6, 2, 2);
+    }
+  }
+  if (!emissive) {
+    g.fillStyle = '#0d0f12';
+    g.fillRect(0, 0, 18, Hh);
+    g.fillRect(W - 18, 0, 18, Hh);
+  }
+}
+
+/** Texture set for filler racks in the neighbouring rows: a full rack of nodes with lit LEDs. */
+export function rackFaceTex(rear: boolean, emissive: boolean, variant: number): THREE.CanvasTexture {
+  return canvasTex(`rackface${rear}${emissive}${variant}`, 256, 1024, (g) => drawRackFace(g, emissive, rear, 17 + variant * 7919));
+}
+
+
+/**
+ * Baked face of a 2U server (front or rear) drawn from the model's real slot layout, used for every server
+ * you are not working on, so a full row costs one draw call per server instead of hundreds.
+ */
+export function serverFaceTex(modelId: string, rear: boolean): THREE.CanvasTexture {
+  return canvasTex(`srvface${modelId}${rear}`, 512, 100, (g) => {
+    const m = MODELS[modelId];
+    const S = 116; // px per unit (4.4 wide → 510 px)
+    const px = (x: number) => (rear ? 2.2 - x : x + 2.2) * S;
+    const py = (y: number) => (0.86 - y) * S;
+    g.fillStyle = '#3a414b';
+    g.fillRect(0, 0, 512, 100);
+    if (!rear) {
+      if (modelId === 'hx-2208c') {
+        g.fillStyle = '#20252c';
+        for (let r = 0; r < 9; r++) for (let c = 0; c < 26; c++) g.fillRect(px(0.15) + c * 8 + (r % 2 ? 4 : 0), py(0.8) + r * 9, 4, 4);
+      }
+      for (const s of m.slots.filter((x) => x.access === 'front')) {
+        const l = m.layout[s.id];
+        const x0 = px(l.x - l.w * 0.48);
+        const y0 = py(l.y + l.h * 0.96);
+        const w = l.w * 0.96 * S;
+        const h = l.h * 0.92 * S;
+        g.fillStyle = '#2b3038';
+        g.fillRect(x0, y0, w, h);
+        g.fillStyle = '#e57a22';
+        if (s.kind === 'hdd') g.fillRect(x0 + w * 0.62, y0 + h * 0.22, w * 0.3, h * 0.56);
+        else g.fillRect(x0 + w * 0.2, y0 + h * 0.72, w * 0.6, h * 0.2);
+      }
+      g.fillStyle = '#181c22';
+      g.fillRect(0, 0, 14, 100);
+      g.fillRect(498, 0, 14, 100);
+      g.fillStyle = '#f4f4f2';
+      g.fillRect(2, 30, 10, 30);
+    } else {
+      for (const p of ['PSU1', 'PSU2']) {
+        const l = m.layout[p];
+        const x0 = px(l.x + l.w / 2);
+        const y0 = py(l.y + l.h);
+        g.fillStyle = '#30363e';
+        g.fillRect(x0, y0, l.w * S, l.h * S - 2);
+        g.fillStyle = '#0b0d10';
+        for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) g.fillRect(x0 + l.w * S * 0.45 + c * 8, y0 + 5 + r * 9, 5, 5);
+        g.fillStyle = '#2fb35a';
+        g.fillRect(x0 + 3, y0 + 8, 5, 20);
+        g.fillStyle = '#111';
+        g.fillRect(x0 + 12, y0 + 12, 18, 14);
+      }
+      const l = m.layout.OCP0;
+      g.fillStyle = '#596270';
+      g.fillRect(px(l.x + l.w / 2), py(l.y + l.h + 0.03), l.w * S, (l.h + 0.05) * S);
+      g.fillStyle = '#050505';
+      g.fillRect(px(-1.85) - 8, py(0.16), 16, 11);
+      g.fillRect(px(-1.45) - 8, py(0.16), 16, 11);
+      g.fillRect(px(-0.95) - 9, py(0.37), 18, 15);
+      g.fillStyle = '#20252c';
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 12; c++) g.fillRect(px(1.05) + c * 9, py(0.8) + r * 9, 5, 5);
+    }
+  });
+}
+
+/** Rear face of a 1U switch: two rows of ports + uplinks. */
+export function switchFaceTex(modelId: string): THREE.CanvasTexture {
+  return canvasTex(`swface${modelId}`, 512, 52, (g) => {
+    g.fillStyle = modelId === 'tx-4808' ? '#20262e' : '#1f2b3a';
+    g.fillRect(0, 0, 512, 52);
+    g.fillStyle = '#050607';
+    for (let c = 0; c < 24; c++) for (let r = 0; r < 2; r++) g.fillRect(24 + c * 14, 8 + r * 20, 11, 14);
+    if (modelId === 'tx-4808') for (let c = 0; c < 8; c++) g.fillRect(380 + c * 14, 12, 10, 26);
+  });
+}
+
+/** PDU strip: a column of C13 outlets. */
+export function pduTex(side: 'A' | 'B'): THREE.CanvasTexture {
+  return canvasTex(`pdu${side}`, 32, 512, (g) => {
+    g.fillStyle = side === 'A' ? '#1b2d4a' : '#4a1b22';
+    g.fillRect(0, 0, 32, 512);
+    g.fillStyle = '#0a0a0a';
+    for (let i = 0; i < 24; i++) g.fillRect(6, 512 - (40 + i * 19.5), 20, 13);
+  });
 }

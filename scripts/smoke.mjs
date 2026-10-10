@@ -15,7 +15,7 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
 page.on('pageerror', (e) => errors.push(String(e)));
-const shot = (n) => page.screenshot({ path: `${out}/${n}.png` });
+const shot = (n) => page.screenshot({ path: `${out}/${n}.png`, timeout: 120000 });
 const base = `http://localhost:${port}/DCTtraining/`;
 
 try {

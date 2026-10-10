@@ -1,19 +1,32 @@
 import type { ThreeEvent } from '@react-three/fiber';
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import * as THREE from 'three';
 import { MODELS } from '../../../engine/catalog';
 import { hasAC, linkState, parseOutlet } from '../../../engine/projectors';
 import type { Cable, Device, Rack, World } from '../../../engine/types';
 import { useStore } from '../../store';
-import { deviceOrigin, Label, Led, MAT, outletWorld, PDU_X, PDU_Z, PLINTH, portLocal, portWorld, RACK_D, RACK_W, U, uBaseY } from './common';
+import { deviceOrigin, Label, Led, MAT, pduTex, postTex, rackFaceTex, switchFaceTex, outletWorld, PDU_X, PDU_Z, PLINTH, portLocal, portWorld, RACK_D, RACK_W, U, uBaseY } from './common';
 
 // ---------- switch ----------
 
-function SwitchMeshInner({ dev, x, selected, pendingPort, onDevice, onPort }: { dev: Device; x: number; selected: boolean; pendingPort?: string | null; onDevice: (id: string) => void; onPort: (id: string, p: string) => void; cablesSig: string }) {
+function SwitchMeshInner({ dev, x, selected, pendingPort, onDevice, onPort, lod = 'full' }: { dev: Device; x: number; selected: boolean; pendingPort?: string | null; onDevice: (id: string) => void; onPort: (id: string, p: string) => void; cablesSig: string; lod?: 'full' | 'low' }) {
   const w = useStore.getState().world!;
   const m = MODELS[dev.model];
   const pos = deviceOrigin(dev, x);
   const ac = hasAC(w, dev);
+  if (lod === 'low')
+    return (
+      <group position={pos}>
+        <mesh position={[0, U / 2 - 0.01, 0]} onClick={(e) => (e.stopPropagation(), onDevice(dev.id))}>
+          <boxGeometry args={[4.4, U - 0.02, 4.5]} />
+          {[0, 1, 2, 3, 4].map((i) => (
+            <meshStandardMaterial key={i} attach={`material-${i}`} color={dev.role === 'switch' ? '#20262e' : '#1f2b3a'} metalness={0.5} roughness={0.5} />
+          ))}
+          <meshStandardMaterial attach="material-5" map={switchFaceTex(dev.model)} emissive={ac ? '#1a4d22' : '#000'} emissiveIntensity={0.15} />
+        </mesh>
+        <Led state={ac ? 'green' : 'off'} position={[-2.15, 0.3, -2.27]} size={0.03} />
+      </group>
+    );
   return (
     <group position={pos}>
       <mesh
@@ -102,8 +115,9 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
         </mesh>
       ))}
       {posts.map(([px, pz], i) => (
-        <mesh key={i} position={[px, PLINTH + (rack.heightU * U) / 2, pz]} material={MAT.post}>
+        <mesh key={i} position={[px, PLINTH + (rack.heightU * U) / 2, pz]}>
           <boxGeometry args={[0.18, rack.heightU * U, 0.08]} />
+          <meshStandardMaterial map={postTex()} metalness={0.7} roughness={0.4} />
         </mesh>
       ))}
       {/* U labels on front and rear left posts */}
@@ -127,11 +141,10 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
           </mesh>
           <Label text={`PDU-${p.side}`} position={[0, PLINTH + 18.3, -0.11]} rotation={[0, Math.PI, 0]} size={[0.3, 0.12]} opts={{ bg: p.side === 'A' ? '#2f7de1' : '#e1442f', fg: '#fff', w: 120, h: 48 }} />
           <Led state={p.breakerTripped ? 'red' : 'green'} position={[0, PLINTH + 17.8, -0.11]} size={0.05} />
-          {Array.from({ length: p.outlets }, (_, i) => (
-            <mesh key={i} position={[0, 1.4 + i * 0.72, -0.11]} material={MAT.port}>
-              <boxGeometry args={[0.18, 0.2, 0.03]} />
-            </mesh>
-          ))}
+          <mesh position={[0, PLINTH + 9, -0.105]} rotation={[0, Math.PI, 0]} raycast={() => null}>
+            <planeGeometry args={[0.3, 18]} />
+            <meshStandardMaterial map={pduTex(p.side)} roughness={0.6} />
+          </mesh>
         </group>
       ))}
       {/* rails */}
@@ -167,27 +180,31 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
 }
 export const RackFrame = memo(RackFrameInner);
 
-/** Simple placeholder rack for atmosphere (not in the world). */
+/** Filler rack for atmosphere (not in the world): a full rack of nodes with glowing LEDs, front and rear. */
 export function DummyRack({ x, z = 0, flip = false }: { x: number; z?: number; flip?: boolean }) {
-  const [lights] = useState(() => Array.from({ length: 14 }, () => Math.random()));
+  const variant = Math.abs(Math.round(x * 7 + z)) % 4;
   const h = 42 * U + PLINTH + 0.6;
+  const face = (rear: boolean) => (
+    <meshStandardMaterial
+      attach={`material-${rear ? 5 : 4}`}
+      map={rackFaceTex(rear, false, variant)}
+      emissiveMap={rackFaceTex(rear, true, variant)}
+      emissive="#ffffff"
+      emissiveIntensity={2.4}
+      metalness={0.4}
+      roughness={0.55}
+    />
+  );
   return (
     <group position={[x, 0, z]} rotation={[0, flip ? Math.PI : 0, 0]}>
-      <mesh position={[0, h / 2, 0]} material={MAT.rack}>
+      <mesh position={[0, h / 2, 0]}>
         <boxGeometry args={[RACK_W, h, RACK_D]} />
+        {[0, 1, 2, 3].map((i) => (
+          <meshStandardMaterial key={i} attach={`material-${i}`} color="#15181d" metalness={0.5} roughness={0.6} />
+        ))}
+        {face(false)}
+        {face(true)}
       </mesh>
-      {lights.map((r, i) => (
-        <mesh key={i} position={[1.8, PLINTH + 0.5 + i * 1.25, RACK_D / 2 + 0.01]}>
-          <planeGeometry args={[0.06, 0.06]} />
-          <meshBasicMaterial color={r > 0.92 ? '#ffae2b' : '#2bff6a'} toneMapped={false} />
-        </mesh>
-      ))}
-      {lights.map((_, i) => (
-        <mesh key={`b${i}`} position={[0, PLINTH + 0.5 + i * 1.25, RACK_D / 2 + 0.005]}>
-          <planeGeometry args={[4.4, 0.86]} />
-          <meshStandardMaterial color="#2a3038" metalness={0.5} roughness={0.5} />
-        </mesh>
-      ))}
     </group>
   );
 }
@@ -212,13 +229,13 @@ function curveFor(a: THREE.Vector3, b: THREE.Vector3, side: number): THREE.Catmu
   return new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.3);
 }
 
-function CableTube({ cable, a, b, side, selected, onClick }: { cable: Cable; a: THREE.Vector3; b: THREE.Vector3; side: number; selected: boolean; onClick: (id: string) => void }) {
-  const geo = useMemo(() => new THREE.TubeGeometry(curveFor(a, b, side), 40, cable.type === 'cat6' ? 0.022 : 0.03, 6, false), [a.x, a.y, a.z, b.x, b.y, b.z, side, cable.type]); // eslint-disable-line react-hooks/exhaustive-deps
+function CableTube({ cable, a, b, side, selected, onClick, plugs }: { cable: Cable; a: THREE.Vector3; b: THREE.Vector3; side: number; selected: boolean; onClick: (id: string) => void; plugs: boolean }) {
+  const geo = useMemo(() => new THREE.TubeGeometry(curveFor(a, b, side), 24, cable.type === 'cat6' ? 0.022 : 0.03, 5, false), [a.x, a.y, a.z, b.x, b.y, b.z, side, cable.type]); // eslint-disable-line react-hooks/exhaustive-deps
   const color = cable.condition === 'damaged' ? '#7a2b2b' : CABLE_COLORS[cable.type] ?? '#111';
   return (
     <group>
-      <Plug at={a} type={cable.type} color={color} />
-      <Plug at={b} type={cable.type} color={color} />
+      {plugs && <Plug at={a} type={cable.type} color={color} />}
+      {plugs && <Plug at={b} type={cable.type} color={color} />}
     <mesh
       geometry={geo}
       onClick={(e) => {
@@ -275,7 +292,7 @@ function Plug({ at, type, color }: { at: THREE.Vector3; type: Cable['type'] | 'p
   );
 }
 
-export function Cables({ w, originPos, rackIds, selCable, onCable }: { w: World; originPos: number; rackIds: Set<string>; selCable?: string; onCable: (id: string) => void }) {
+export function Cables({ w, originPos, rackIds, selCable, onCable, detailRack }: { w: World; originPos: number; rackIds: Set<string>; selCable?: string; onCable: (id: string) => void; detailRack?: string }) {
   const items: Array<{ c: Cable; a: THREE.Vector3; b: THREE.Vector3; side: number }> = [];
   for (const c of Object.values(w.cables)) {
     const ends = [c.a, c.b].filter(Boolean) as NonNullable<Cable['a']>[];
@@ -294,7 +311,7 @@ export function Cables({ w, originPos, rackIds, selCable, onCable }: { w: World;
     }
   }
   // power cords
-  const cords: Array<{ id: string; a: THREE.Vector3; b: THREE.Vector3; side: 'A' | 'B'; x: number }> = [];
+  const cords: Array<{ id: string; a: THREE.Vector3; b: THREE.Vector3; side: 'A' | 'B'; x: number; rack: string }> = [];
   for (const d of Object.values(w.devices)) {
     if (!d.rackId || !rackIds.has(d.rackId)) continue;
     for (const [psu, o] of Object.entries(d.powerCords)) {
@@ -302,29 +319,29 @@ export function Cables({ w, originPos, rackIds, selCable, onCable }: { w: World;
       const pa = d.role === 'server' ? portWorld(w, d.id, psu, originPos) : portWorld(w, d.id, 'swp1', originPos)?.add(new THREE.Vector3(psu === 'PSU1' ? 3.9 : 3.6, 0.1, 0));
       const pb = outletWorld(w, o, originPos);
       const side = parseOutlet(o)?.side ?? 'A';
-      if (pa && pb) cords.push({ id: `${d.id}${psu}`, a: pa, b: pb, side, x: pb.x });
+      if (pa && pb) cords.push({ id: `${d.id}${psu}`, a: pa, b: pb, side, x: pb.x, rack: d.rackId });
     }
   }
   return (
     <group>
       {items.map((it) => (
-        <CableTube key={it.c.id} cable={it.c} a={it.a} b={it.b} side={it.side} selected={selCable === it.c.id} onClick={onCable} />
+        <CableTube key={it.c.id} cable={it.c} a={it.a} b={it.b} side={it.side} selected={selCable === it.c.id} onClick={onCable} plugs={!!it.c.a && w.devices[it.c.a.deviceId]?.rackId === detailRack} />
       ))}
       {cords.map((c) => (
-        <PowerCord key={c.id} a={c.a} b={c.b} side={c.side} />
+        <PowerCord key={c.id} a={c.a} b={c.b} side={c.side} plug={c.rack === detailRack} />
       ))}
     </group>
   );
 }
 
-function PowerCord({ a, b, side }: { a: THREE.Vector3; b: THREE.Vector3; side: 'A' | 'B' }) {
+function PowerCord({ a, b, side, plug }: { a: THREE.Vector3; b: THREE.Vector3; side: 'A' | 'B'; plug: boolean }) {
   const geo = useMemo(() => {
     const pts = [a.clone(), a.clone().add(new THREE.Vector3(0, -0.08, -0.35)), new THREE.Vector3(b.x - Math.sign(b.x - a.x) * 0.25, a.y - 0.12, b.z - 0.2), b.clone().add(new THREE.Vector3(0, 0, -0.18)), b.clone()];
-    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 24, 0.03, 6, false);
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 16, 0.03, 5, false);
   }, [a.x, a.y, a.z, b.x, b.y, b.z]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <group>
-      <Plug at={a} type="power" color="#111" />
+      {plug && <Plug at={a} type="power" color="#111" />}
       <mesh geometry={geo}>
         <meshStandardMaterial color={side === 'A' ? '#2f6fe1' : '#d23b3b'} roughness={0.7} />
       </mesh>

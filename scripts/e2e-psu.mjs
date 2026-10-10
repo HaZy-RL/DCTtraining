@@ -14,7 +14,7 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('pageerror', (e) => errors.push(String(e)));
 page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-const shot = (n) => page.screenshot({ path: `${out}/${n}.png` });
+const shot = (n) => page.screenshot({ path: `${out}/${n}.png`, timeout: 120000 });
 const S = (fn, arg) => page.evaluate(fn, arg);
 const click = async (name) => {
   await page.getByRole('button', { name }).first().click();
@@ -23,6 +23,8 @@ const click = async (name) => {
 let result = 'unknown';
 try {
   await page.goto(`http://localhost:${port}/DCTtraining/`, { waitUntil: 'networkidle' });
+  // Software GL in CI is slow: allow choosing quality via E2E_QUALITY (default high)
+  await S((q) => window.__DCT__.getState().updateSettings({ quality: q }), process.env.E2E_QUALITY ?? 'low');
   await S(() => window.__DCT__.getState().start('hw-psu', 'practice', 4242));
   await click(/Clock in/);
   // ticket → In Progress

@@ -58,7 +58,7 @@ describe('DIMM golden path', () => {
     act({ type: 'fastener', deviceId: dev.id, target: 'lid', id: 'screw', secure: true });
     act({ type: 'servicePosition', deviceId: dev.id, out: false });
     act({ type: 'walk', to: dev.rackId!, side: 'rear' });
-    const cords = { PSU1: `${dev.rackId}-PDU-A:20`, PSU2: `${dev.rackId}-PDU-B:20` };
+    const cords = { PSU1: `${dev.rackId}-PDU-A:24`, PSU2: `${dev.rackId}-PDU-B:24` };
     for (const psu of ['PSU1', 'PSU2'] as const) {
       act({ type: 'cord', deviceId: dev.id, psu, outlet: cords[psu] });
       act({ type: 'fastener', deviceId: dev.id, target: psu, id: 'bail', secure: true });

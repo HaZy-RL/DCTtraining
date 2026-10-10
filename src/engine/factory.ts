@@ -83,8 +83,9 @@ export function createRack(row: string, position: number, opts: { hall?: string 
   const mkPdu = (side: 'A' | 'B'): Pdu => ({
     id: `${id}-PDU-${side}`,
     side,
-    breakerAmps: 30,
-    volts: 208,
+    breakerAmps: 32,
+    volts: 415,
+    phases: 3,
     outlets: 24,
     breakerTripped: false,
   });
@@ -234,7 +235,7 @@ export function buildRack(world: World, rng: Rng, opts: RackBuildOpts): Rack {
       type: 'dac',
       a: { deviceId: dev.id, port: 'nic0p0' },
       b: { deviceId: tor.id, port: `swp${n}` },
-      lengthM: 2,
+      lengthM: s.u < 22 ? 3 : 2,
       labelA: `${lab(s.u, 'P0')} > ${lab(42, `SWP${n}`)}`,
       labelB: `${lab(42, `SWP${n}`)} > ${lab(s.u, 'P0')}`,
       condition: 'ok',
@@ -243,7 +244,7 @@ export function buildRack(world: World, rng: Rng, opts: RackBuildOpts): Rack {
       type: 'dac',
       a: { deviceId: dev.id, port: 'nic0p1' },
       b: { deviceId: tor.id, port: `swp${n + 24}` },
-      lengthM: 2,
+      lengthM: s.u < 22 ? 3 : 2,
       labelA: `${lab(s.u, 'P1')} > ${lab(42, `SWP${n + 24}`)}`,
       labelB: `${lab(42, `SWP${n + 24}`)} > ${lab(s.u, 'P1')}`,
       condition: 'ok',
@@ -252,7 +253,7 @@ export function buildRack(world: World, rng: Rng, opts: RackBuildOpts): Rack {
       type: 'cat6',
       a: { deviceId: dev.id, port: 'bmc' },
       b: { deviceId: oob.id, port: `mgmt${n}` },
-      lengthM: 2,
+      lengthM: s.u < 22 ? 3 : 2,
       labelA: `${lab(s.u, 'BMC')} > ${lab(41, `MGMT${n}`)}`,
       labelB: `${lab(41, `MGMT${n}`)} > ${lab(s.u, 'BMC')}`,
       condition: 'ok',
@@ -263,7 +264,8 @@ export function buildRack(world: World, rng: Rng, opts: RackBuildOpts): Rack {
 
 /** Standard production rack layout: compute + a couple of storage nodes. */
 export function standardRackServers(rng: Rng, opts: { storageCount?: number; count?: number } = {}) {
-  const count = opts.count ?? 10;
+  // Fill the rack: 2U nodes from U3 up to U40 (U41/U42 hold the OOB and ToR switches).
+  const count = opts.count ?? 19;
   const storageCount = opts.storageCount ?? 2;
   const out: Array<{ model: string; u: number }> = [];
   // heaviest (storage) at the bottom

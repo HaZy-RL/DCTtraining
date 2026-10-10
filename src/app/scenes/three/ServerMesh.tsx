@@ -7,7 +7,7 @@ import { isTight } from '../../../engine/fasteners';
 import { cpuTemp, hasAC, healthLed, powerLed, slotLed } from '../../../engine/projectors';
 import type { Component, Device, Rack } from '../../../engine/types';
 import { useStore } from '../../store';
-import { barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
+import { serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
 
 export interface ServerMeshProps {
   dev: Device;
@@ -581,6 +581,16 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
           </group>
         );
       })}
+      {/* compute nodes: perforated intake bezel + model badge beside the 8 NVMe bays */}
+      {m.id === 'hx-2208c' && (
+        <group>
+          <mesh position={[1.0, 0.43, FZ + 0.012]} raycast={() => null}>
+            <planeGeometry args={[1.8, 0.76]} />
+            <meshStandardMaterial map={grilleTex('#30363e', '#06080a')} metalness={0.6} roughness={0.45} />
+          </mesh>
+          {lod === 'full' && <Label text="HX-2208C" position={[1.0, 0.78, FZ + 0.016]} size={[0.5, 0.07]} opts={{ bg: '#30363e', fg: '#c9d0d6', w: 200, h: 28 }} />}
+        </group>
+      )}
       {/* control panel ear */}
       <group onClick={handler(onDevice)}>
         <mesh position={[2.1, 0.43, FZ + 0.03]} material={MAT.bezel}>
@@ -673,7 +683,7 @@ function PsuBody({ dev, slot, c, lod, guide, selected, onSlot, onFastener }: { d
         <meshStandardMaterial color={dc ? '#4a3b2a' : '#30363e'} emissive={selected ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.6} roughness={0.4} />
       </mesh>
       {/* spec label on top: only visible once it's pulled out */}
-      <Label text={`${c.partNumber}\nS/N ${c.serial}\n100-240V~ 10A  ${dc ? '' : '80+ TITANIUM'}`} position={[l.x, yc + l.h / 2 + 0.003, l.z + out]} rotation={[-Math.PI / 2, 0, 0]} size={[l.w * 0.85, l.d * 0.45]} opts={{ bg: '#e9edf0', fg: '#111', w: 256, h: 160, font: 'bold 18px monospace' }} />
+      <Label text={`${c.partNumber}\nS/N ${c.serial}\n100-240V~ 10A  ${dc ? '' : '80+ TITANIUM'}`} position={[l.x, yc + l.h / 2 + 0.003, l.z + out]} rotation={[-Math.PI / 2, 0, Math.PI]} size={[l.w * 0.85, l.d * 0.45]} opts={{ bg: '#e9edf0', fg: '#111', w: 256, h: 160, font: 'bold 18px monospace' }} />
       {lod === 'full' && (
         <>
           {/* fan behind the grille */}
@@ -833,6 +843,31 @@ function Lid({ dev, guide, selected, onSlot, onFastener }: { dev: Device; guide?
   );
 }
 
+/** One textured box + live LEDs: how every server you are not working on is drawn. */
+function LowServer({ dev, ac, groupRef, target, onDevice }: { dev: Device; ac: boolean; groupRef: React.RefObject<THREE.Group | null>; target: THREE.Vector3; onDevice: () => void }) {
+  const w = useStore.getState().world!;
+  return (
+    <group ref={groupRef} position={target}>
+      <mesh position={[0, H / 2, 0]} onClick={handler(onDevice)} {...hoverCursor()}>
+        <boxGeometry args={[4.4, H, CHASSIS_D]} />
+        <meshStandardMaterial attach="material-0" color="#3a414b" metalness={0.55} roughness={0.45} />
+        <meshStandardMaterial attach="material-1" color="#3a414b" metalness={0.55} roughness={0.45} />
+        <meshStandardMaterial attach="material-2" color="#ffffff" map={lidTex()} metalness={0.55} roughness={0.45} />
+        <meshStandardMaterial attach="material-3" color="#3a414b" metalness={0.55} roughness={0.45} />
+        <meshStandardMaterial attach="material-4" map={serverFaceTex(dev.model, false)} metalness={0.5} roughness={0.5} />
+        <meshStandardMaterial attach="material-5" map={serverFaceTex(dev.model, true)} metalness={0.5} roughness={0.5} />
+      </mesh>
+      <Led state={powerLed(w, dev) === 'green' ? 'green' : powerLed(w, dev) === 'amber' ? 'amber' : 'off'} position={[2.1, 0.72, FZ + 0.02]} size={0.035} />
+      <Led state={healthLed(w, dev) === 'off' ? 'off' : healthLed(w, dev) === 'green' ? 'green' : healthLed(w, dev)} position={[2.1, 0.55, FZ + 0.02]} size={0.035} />
+      {dev.locateLed && ac && <Led state="blue_blink" position={[2.1, 0.38, FZ + 0.02]} size={0.035} period={0.6} />}
+      {['PSU1', 'PSU2'].map((psu) => {
+        const l = MODELS[dev.model].layout[psu];
+        return dev.slots[psu] ? <Led key={psu} state={slotLed(w, dev, psu)} position={[l.x + 0.32, l.y + l.h / 2 + 0.13, RZ - 0.02]} size={0.03} /> : null;
+      })}
+    </group>
+  );
+}
+
 function ServerMeshInner(p: ServerMeshProps) {
   const { dev, x, detail, lod } = p;
   const w = useStore.getState().world!;
@@ -846,6 +881,7 @@ function ServerMeshInner(p: ServerMeshProps) {
   });
   const showInside = detail && !dev.layers.lid;
   const onSlot = (s: string) => p.onSlot(dev.id, s);
+  if (lod === 'low') return <LowServer dev={dev} ac={ac} groupRef={g} target={target} onDevice={() => p.onDevice(dev.id)} />;
   const onFastener = (t: string, id: string) => p.onFastener(dev.id, t, id);
   return (
     <group ref={g} position={target}>
