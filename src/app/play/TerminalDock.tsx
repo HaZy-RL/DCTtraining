@@ -18,7 +18,7 @@ export function TerminalDock() {
 
   useEffect(() => {
     const term = new Terminal({
-      fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace',
+      fontFamily: `ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'DCT Emoji'`,
       fontSize: 13,
       cursorBlink: true,
       convertEol: false,

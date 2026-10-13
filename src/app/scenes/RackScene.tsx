@@ -1,13 +1,14 @@
 import { OrbitControls } from '@react-three/drei';
 import { Look } from './three/Look';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { OrbitControls as OrbitImpl } from 'three-stdlib';
 import { MODELS } from '../../engine/catalog';
 import { isTight } from '../../engine/fasteners';
-import type { PortRef, Rack } from '../../engine/types';
-import { useCoach } from '../play/guide';
+import type { PortRef, Rack, World } from '../../engine/types';
+import { useShallow } from 'zustand/react/shallow';
+import { useCoachTarget } from '../play/guide';
 import { useStore } from '../store';
 import { blankTex, canvasTex, deviceOrigin, FRONT_RAIL_Z, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, U, uBaseY, ventTileTex } from './three/common';
 import { Cables, DummyRack, RackFrame, SwitchMesh } from './three/RackParts';
@@ -37,6 +38,21 @@ function CameraRig({ goal }: { goal: { pos: THREE.Vector3; target: THREE.Vector3
     controls.target.lerp(goal.target, anim.current.t >= 1 ? 1 : k);
     controls.update();
   });
+  return null;
+}
+
+/**
+ * The objectives/inspector column covers the left of the canvas (see .left-stack in styles.css), so shift the
+ * projection centre right by half its width: whatever the orbit camera looks at lands in the middle of the free area.
+ */
+function ViewOffset() {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
+  const { width, height } = useThree((s) => s.size);
+  useEffect(() => {
+    const col = window.innerWidth > 860 ? Math.min(440, width * 0.46) + 10 : 0; // same breakpoint as the CSS media query
+    camera.setViewOffset(width, height, -col / 2, 0, width, height);
+    return () => camera.clearViewOffset();
+  }, [camera, width, height]);
   return null;
 }
 
@@ -131,6 +147,11 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, roomX0 }: {
     };
   }, [gl]);
 
+  // Eased motion: velocity ramps up/down, the view trails the mouse slightly, head-bob fades with speed.
+  const vel = useRef(new THREE.Vector2());
+  const look = useRef<{ yaw: number; pitch: number; x: number; z: number } | null>(null);
+  const bob = useRef({ phase: 0, amp: 0 });
+
   useFrame((_, dtRaw) => {
     const dt = Math.min(dtRaw, 0.1);
     const k = keys.current;
@@ -138,13 +159,21 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, roomX0 }: {
     walker.yaw += turn * dt * 1.8;
     const fwd = (k.has('w') || k.has('arrowup') ? 1 : 0) - (k.has('s') || k.has('arrowdown') ? 1 : 0);
     const strafe = (k.has('d') ? 1 : 0) - (k.has('a') ? 1 : 0);
-    const moving = fwd !== 0 || strafe !== 0;
+    const sin = Math.sin(walker.yaw);
+    const cos = Math.cos(walker.yaw);
+    const len = Math.hypot(fwd, strafe) || 1; // no faster on the diagonal
+    const top = k.has('shift') ? 30 : 15;
+    const tx = ((-sin * fwd + cos * strafe) / len) * (fwd || strafe ? top : 0);
+    const tz = ((-cos * fwd - sin * strafe) / len) * (fwd || strafe ? top : 0);
+    const reduced = useStore.getState().progress.settings.reducedMotion;
+    const accel = fwd || strafe ? 10 : 14; // stop a little quicker than you start
+    vel.current.x = reduced ? tx : THREE.MathUtils.damp(vel.current.x, tx, accel, dt);
+    vel.current.y = reduced ? tz : THREE.MathUtils.damp(vel.current.y, tz, accel, dt);
+    if (Math.abs(vel.current.x) < 0.01 && Math.abs(vel.current.y) < 0.01) vel.current.set(0, 0);
+    const moving = vel.current.lengthSq() > 0;
     if (moving) {
-      const speed = (k.has('shift') ? 30 : 15) * dt;
-      const sin = Math.sin(walker.yaw);
-      const cos = Math.cos(walker.yaw);
-      let nx = walker.x + (-sin * fwd + cos * strafe) * speed;
-      let nz = walker.z + (-cos * fwd - sin * strafe) * speed;
+      let nx = walker.x + vel.current.x * dt;
+      let nz = walker.z + vel.current.y * dt;
       nx = Math.max(hallMinX, Math.min(hallMaxX, nx));
       nz = Math.max(-WALL_Z, Math.min(WALL_Z, nz));
       const r = 0.7;
@@ -165,11 +194,29 @@ function WalkController({ racks, origin, rowMinX, rowMaxX, hallMinX, roomX0 }: {
         if (penZ < penX) nz = Math.sign(walker.z || nz || 1) * (ROW_HALF + r);
         else nx = nx - (rowMinX - r) < rowMaxX + r - nx ? rowMinX - r : rowMaxX + r;
       }
+      // whatever a wall stopped, stop pushing into it (no jitter while sliding along a rack)
+      const ix = walker.x + vel.current.x * dt;
+      const iz = walker.z + vel.current.y * dt;
+      if (Math.abs(nx - ix) > 1e-4) vel.current.x = 0;
+      if (Math.abs(nz - iz) > 1e-4) vel.current.y = 0;
       walker.x = nx;
       walker.z = nz;
     }
-    camera.position.set(walker.x, EYE + (moving ? Math.sin(performance.now() / 120) * 0.08 : 0), walker.z);
-    camera.rotation.set(walker.pitch, walker.yaw, 0, 'YXZ');
+    // Head-bob: phase follows distance walked, amplitude follows speed, so it eases in and out.
+    const speed = vel.current.length();
+    bob.current.phase += speed * dt * 0.55;
+    bob.current.amp = reduced ? 0 : THREE.MathUtils.damp(bob.current.amp, Math.min(1, speed / 15) * 0.08, 8, dt);
+    // The view trails yaw/pitch a touch (smooths uneven pointer events); teleports ("Walk here") snap.
+    const lk = look.current;
+    if (!lk || reduced || Math.hypot(lk.x - walker.x, lk.z - walker.z) > 3) look.current = { yaw: walker.yaw, pitch: walker.pitch, x: walker.x, z: walker.z };
+    else {
+      lk.yaw = THREE.MathUtils.damp(lk.yaw, walker.yaw, 22, dt);
+      lk.pitch = THREE.MathUtils.damp(lk.pitch, walker.pitch, 22, dt);
+      lk.x = walker.x;
+      lk.z = walker.z;
+    }
+    camera.position.set(walker.x, EYE + Math.sin(bob.current.phase) * bob.current.amp, walker.z);
+    camera.rotation.set(look.current!.pitch, look.current!.yaw, 0, 'YXZ');
     // which rack face am I standing at?
     let zone = `aisle:${walker.z >= 0 ? 'front' : 'rear'}`;
     if (walker.x >= roomX0) zone = walker.x < roomX0 + 13 ? 'noc:front' : 'cage:front';
@@ -230,7 +277,7 @@ function Avatar() {
   );
 }
 
-function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; minP: number; maxP: number; origin: number }) {
+const Hall = memo(function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; minP: number; maxP: number; origin: number }) {
   const tiles = useMemo(
     () =>
       canvasTex(
@@ -302,8 +349,8 @@ function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; 
       ))}
       {/* aisle signs */}
       {[
-        { z: WALL_Z * 0.5, text: '❄ COLD AISLE · FRONT OF RACKS', bg: '#2f7de1' },
-        { z: -WALL_Z * 0.5, text: '🔥 HOT AISLE · REAR OF RACKS', bg: '#e1442f' },
+        { z: WALL_Z * 0.5, text: 'COLD AISLE · FRONT OF RACKS', bg: '#2f7de1' },
+        { z: -WALL_Z * 0.5, text: 'HOT AISLE · REAR OF RACKS', bg: '#e1442f' },
       ].map((s) => (
         <mesh key={s.z} position={[midX, 26, s.z]}>
           <planeGeometry args={[9, 1.1]} />
@@ -324,10 +371,10 @@ function Hall({ minX, maxX, minP, maxP, origin }: { minX: number; maxX: number; 
       ))}
     </group>
   );
-}
+});
 
 /** Perforated blanking panels in every empty U so a full rack looks (and breathes) like a real one. */
-function BlankingPanels({ racks, origin, buildRackId }: { racks: Rack[]; origin: number; buildRackId?: string }) {
+const BlankingPanels = memo(function BlankingPanels({ racks, origin, buildRackId }: { racks: Rack[]; origin: number; buildRackId?: string }) {
   const devices = useStore((s) => s.world!.devices);
   const rails = racks.map((r) => r.rails);
   const panels = useMemo(() => {
@@ -351,10 +398,15 @@ function BlankingPanels({ racks, origin, buildRackId }: { racks: Rack[]; origin:
       ))}
     </group>
   );
-}
+});
 
 export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
-  const w = useStore((s) => s.world!);
+  // Only the slices the scene draws: the sim clock writes world.t twice a second, and re-rendering the whole hall on
+  // every tick made walking stutter.
+  const slices = useStore(
+    useShallow((s) => ({ racks: s.world!.racks, devices: s.world!.devices, cables: s.world!.cables, trainee: s.world!.trainee, meta: s.world!.meta, spares: s.world!.spares })),
+  );
+  const w = useMemo(() => slices as unknown as World, [slices.racks, slices.devices, slices.cables, slices.trainee, slices.meta, slices.spares]); // eslint-disable-line react-hooks/exhaustive-deps
   const inst = useStore((s) => s.inst!);
   const sel = useStore((s) => s.sel);
   const view = useStore((s) => s.view);
@@ -362,7 +414,6 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   const camMode = useStore((s) => s.camMode);
   const pendingPort = useStore((s) => s.pendingPort);
   const quality = useStore((s) => s.progress.settings.quality);
-  const coach = useCoach();
 
   const focusRackId = sel.rackId ?? inst.focusRackId ?? (w.trainee.location && w.racks[w.trainee.location] ? w.trainee.location : Object.keys(w.racks)[0]);
   const focusRack = w.racks[focusRackId] ?? Object.values(w.racks)[0];
@@ -516,14 +567,12 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     const k = `${camMode}`;
     if (dev?.rackId && rackIds.has(dev.rackId)) {
       const o = deviceOrigin(dev, rackX(w.racks[dev.rackId], origin));
-      // Panels cover the left of the screen, so aim a little to the left of the part: it lands right of centre.
-      const left = new THREE.Vector3(rear ? 1.3 : -1.3, 0, 0);
       const lay = sel.slot ? MODELS[dev.model].layout[sel.slot] : undefined;
       if (dev.servicePosition && !rear) {
-        const t = o.clone().add(new THREE.Vector3(0, 0.4, 0.3)).add(left);
+        const t = o.clone().add(new THREE.Vector3(0, 0.4, 0.3));
         return { target: t, pos: t.clone().add(new THREE.Vector3(0.6, 7.5, 6.5)), key: `${dev.id}-svc-${view}${k}` };
       }
-      const t = o.clone().add(new THREE.Vector3(lay && !dev.servicePosition ? lay.x : 0, 0.4, rear ? -3.4 : 3.6)).add(left);
+      const t = o.clone().add(new THREE.Vector3(lay && !dev.servicePosition ? lay.x : 0, 0.4, rear ? -3.4 : 3.6));
       return { target: t, pos: t.clone().add(new THREE.Vector3(rear ? -1.2 : 1.2, 1.6, 6.2 * dz)), key: `${dev.id}-${view}${k}-${lay ? sel.slot : ''}` };
     }
     if (sel.room) {
@@ -544,9 +593,8 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   }, [sel.deviceId, sel.slot, sel.u, sel.room, focusRack, origin, view, w.devices, w.racks, rackIds, camMode, roomX0]);
 
   const hl = mode === 'learn' && typeof w.meta.hlDevice === 'string' ? { dev: w.meta.hlDevice as string, slot: w.meta.hlSlot as string } : null;
-  const xs = racks.map((r) => rackX(r, origin));
   // Coach marker: what to touch next (learn mode, or practice after "Show me how")
-  const gt = coach.visible ? coach.current?.target : undefined;
+  const gt = useCoachTarget();
   const guideDev = gt?.deviceId && w.devices[gt.deviceId]?.rackId && rackIds.has(w.devices[gt.deviceId].rackId!) ? w.devices[gt.deviceId] : undefined;
   const beacon = useMemo(() => {
     if (!guideDev) return null;
@@ -566,7 +614,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
   return (
     <Canvas
       shadows={quality === 'high'}
-      dpr={quality === 'high' ? [1, 2] : 1}
+      dpr={quality === 'high' ? [1, 1.5] : 1}
       camera={{ position: [3, 11, 24], fov: 45, near: 0.1, far: 400 }}
       onPointerMissed={() => {
         if (pointerGuard.dragged) return;
@@ -577,13 +625,13 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
     >
       <color attach="background" args={['#dfe6ec']} />
       <fog attach="fog" args={['#dfe6ec', 70, 190]} />
-      <ambientLight intensity={0.75} />
-      <hemisphereLight args={['#ffffff', '#9aa3ad', 0.7]} />
-      <directionalLight position={[10, 30, 20]} intensity={1.1} castShadow={quality === 'high'} />
-      <directionalLight position={[-10, 20, -20]} intensity={0.7} />
-      {xs.map((x) => (
-        <pointLight key={x} position={[x, 24, 10]} intensity={30} distance={30} color="#f4f8ff" />
-      ))}
+      {/* A fixed light rig: less flat fill so edges and reflections give the hardware shape, and never a light per rack
+          (changing the light count recompiles every shader; each point light also costs every pixel). */}
+      <ambientLight intensity={0.3} />
+      <hemisphereLight args={['#ffffff', '#8a939d', 0.75]} />
+      <directionalLight position={[10, 30, 20]} intensity={1.5} castShadow={quality === 'high'} />
+      <directionalLight position={[-6, 14, 26]} intensity={0.55} color="#f4f8ff" />
+      <directionalLight position={[-10, 20, -20]} intensity={0.9} />
       <Look />
       <BlankingPanels racks={racks} origin={origin} buildRackId={buildMode ? focusRack.id : undefined} />
       <Hall minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} minP={minP} maxP={maxP} origin={origin} />
@@ -636,6 +684,7 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
         <>
           <OrbitControls makeDefault enableDamping dampingFactor={0.12} maxPolarAngle={Math.PI * 0.49} minDistance={2} maxDistance={70} />
           <CameraRig goal={goal} />
+          <ViewOffset />
         </>
       ) : (
         <WalkController racks={racks} origin={origin} rowMinX={rowMinX} rowMaxX={rowMaxX} hallMinX={rowMinX - 26} roomX0={roomX0} />

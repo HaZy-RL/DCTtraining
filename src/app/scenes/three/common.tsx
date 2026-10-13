@@ -1,7 +1,9 @@
 // Shared 3D primitives: LEDs, canvas-texture labels, rack geometry and world-space positions.
+import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three-stdlib';
 import { MODELS } from '../../../engine/catalog';
 import { parseOutlet, type Led as LedState } from '../../../engine/projectors';
 import type { Device, Rack, World } from '../../../engine/types';
@@ -86,26 +88,51 @@ function ledColor(c: string): THREE.Color {
   return col;
 }
 
-export function Led({ state, position, size = 0.05, period = 1 }: { state: LedState | 'red' | 'blue'; position: [number, number, number]; size?: number; period?: number }) {
-  const mat = useRef<THREE.MeshBasicMaterial>(null);
-  const [color, blink] = useMemo(() => {
-    if (state === 'off') return ['off', false];
-    const [c, b] = state.split('_');
-    return [c, b === 'blink'];
-  }, [state]);
+// A full row has a few hundred LEDs: they share geometry and one material per colour/blink rate, and every blinking
+// material is updated once per frame (not once per LED).
+const ledGeos = new Map<number, THREE.SphereGeometry>();
+const ledMats = new Map<string, THREE.MeshBasicMaterial>();
+const blinkMats = new Map<THREE.MeshBasicMaterial, number>(); // material → period (s)
+let blinkFrame = -1;
+
+function ledGeo(size: number): THREE.SphereGeometry {
+  let g = ledGeos.get(size);
+  if (!g) {
+    g = new THREE.SphereGeometry(size, 10, 8);
+    ledGeos.set(size, g);
+  }
+  return g;
+}
+
+function ledMat(color: string, blink: boolean, period: number): THREE.MeshBasicMaterial {
+  const key = `${color}|${blink ? period : 0}`;
+  let m = ledMats.get(key);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({ color: ledColor(color), transparent: blink, toneMapped: false });
+    ledMats.set(key, m);
+    if (blink) blinkMats.set(m, period);
+  }
+  return m;
+}
+
+/** Mounted alongside blinking LEDs only; whichever runs first in a frame updates every blink material. */
+function BlinkTick() {
   useFrame(({ clock }) => {
-    if (!mat.current) return;
-    if (!blink) {
-      mat.current.opacity = 1;
-      return;
-    }
-    mat.current.opacity = Math.floor(clock.elapsedTime / (period / 2)) % 2 === 0 ? 1 : 0.15;
+    const f = Math.floor(clock.elapsedTime * 240);
+    if (f === blinkFrame) return;
+    blinkFrame = f;
+    for (const [m, period] of blinkMats) m.opacity = Math.floor(clock.elapsedTime / (period / 2)) % 2 === 0 ? 1 : 0.15;
   });
+  return null;
+}
+
+export function Led({ state, position, size = 0.05, period = 1 }: { state: LedState | 'red' | 'blue'; position: [number, number, number]; size?: number; period?: number }) {
+  const [color, blink] = state === 'off' ? ['off', false] : [state.split('_')[0], state.split('_')[1] === 'blink'];
   return (
-    <mesh position={position}>
-      <sphereGeometry args={[size, 10, 8]} />
-      <meshBasicMaterial ref={mat} color={ledColor(color)} transparent toneMapped={false} />
-    </mesh>
+    <>
+      <mesh position={position} geometry={ledGeo(size)} material={ledMat(color, blink, period)} />
+      {blink && <BlinkTick />}
+    </>
   );
 }
 
@@ -133,19 +160,84 @@ export function labelTexture(text: string, opts: { w?: number; h?: number; bg?: 
   lines.forEach((l, i) => g.fillText(l, opts.align === 'left' ? 8 : w / 2, (h / (lines.length + 1)) * (i + 1)));
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 16; // three.js clamps to what the GPU supports
   texCache.set(key, t);
   return t;
 }
 
+/** Bundled so labels render offline (troika would otherwise fetch a font from a CDN). */
+export const LABEL_FONT = `${import.meta.env.BASE_URL}fonts/DejaVuSansMono-Bold.ttf`;
+
+const flatMats = new Map<string, THREE.MeshBasicMaterial>();
+/** Shared unlit material per colour (label plates and text). */
+export function flatMat(color: string): THREE.MeshBasicMaterial {
+  let m = flatMats.get(color);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({ color, toneMapped: false });
+    flatMats.set(color, m);
+  }
+  return m;
+}
+
+/** World-space glyph size matching the old canvas options (font px relative to canvas height), fitted to the plate. */
+function labelFontSize(text: string, size: [number, number], opts: { h?: number; font?: string } = {}): number {
+  const h = opts.h ?? 64;
+  const px = Number(/(\d+(?:\.\d+)?)px/.exec(opts.font ?? '')?.[1] ?? Math.round(h * 0.55));
+  let fs = (px / h) * size[1];
+  const lines = text.split('\n');
+  const longest = Math.max(...lines.map((l) => l.length));
+  if (longest * 0.6 * fs > size[0] * 0.92) fs = (size[0] * 0.92) / (longest * 0.6); // monospace advance ≈ 0.6 em
+  if (lines.length * fs * 1.15 > size[1] * 0.95) fs = (size[1] * 0.95) / (lines.length * 1.15);
+  return fs;
+}
+
+/**
+ * A printed label: a plate with SDF text on it, sharp at any distance and viewing angle.
+ * `opts` keeps the old canvas-texture vocabulary (w/h/font set the glyph size relative to the plate).
+ */
 export function Label({ text, position, rotation, size, opts }: { text: string; position: [number, number, number]; rotation?: [number, number, number]; size: [number, number]; opts?: Parameters<typeof labelTexture>[1] }) {
-  const tex = useMemo(() => labelTexture(text, opts), [text, opts]);
+  const fs = useMemo(() => labelFontSize(text, size, opts), [text, size[0], size[1], opts?.h, opts?.font]); // eslint-disable-line react-hooks/exhaustive-deps
+  const left = opts?.align === 'left';
   return (
-    <mesh position={position} rotation={rotation}>
-      <planeGeometry args={size} />
-      <meshBasicMaterial map={tex} toneMapped={false} transparent />
-    </mesh>
+    <group position={position} rotation={rotation}>
+      <mesh material={flatMat(opts?.bg ?? '#ffffff')}>
+        <planeGeometry args={size} />
+      </mesh>
+      <Suspense fallback={null}>
+        <Text
+          font={LABEL_FONT}
+          fontSize={fs}
+          material={flatMat(opts?.fg ?? '#111111')}
+          anchorX={left ? 'left' : 'center'}
+          anchorY="middle"
+          textAlign={left ? 'left' : 'center'}
+          lineHeight={1.15}
+          position={[left ? -size[0] / 2 + (size[0] * 8) / (opts?.w ?? 256) : 0, 0, 0.002]}
+          depthOffset={-2}
+          raycast={() => null}
+        >
+          {text}
+        </Text>
+      </Suspense>
+    </group>
   );
+}
+
+// ---------- geometry ----------
+
+const bevelCache = new Map<string, THREE.BufferGeometry>();
+/**
+ * Box with softly rounded edges, cached per size. The edges catch the environment light, which is most of what stops
+ * hardware reading as flat blocks. Radius is capped so thin parts don't turn into pills.
+ */
+export function bevelBox(w: number, h: number, d: number, r = 0.03, segments = 1): THREE.BufferGeometry {
+  const key = `${w}|${h}|${d}|${r}|${segments}`;
+  let g = bevelCache.get(key);
+  if (!g) {
+    g = new RoundedBoxGeometry(w, h, d, segments, Math.min(r, Math.min(w, h, d) * 0.25));
+    bevelCache.set(key, g);
+  }
+  return g;
 }
 
 // ---------- materials ----------
@@ -248,7 +340,7 @@ export function canvasTex(key: string, w: number, h: number, draw: (g: CanvasRen
   draw(c.getContext('2d')!);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 16; // three.js clamps to what the GPU supports
   if (repeat) {
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(repeat[0], repeat[1]);
@@ -338,7 +430,8 @@ export function pcbTex(): THREE.CanvasTexture {
 
 /** Asset-tag sticker: Code-128-style bars (deterministic per tag) with the human-readable tag under it. */
 export function barcodeTex(text: string): THREE.CanvasTexture {
-  return canvasTex(`bc${text}`, 160, 320, (g) => {
+  return canvasTex(`bc${text}`, 320, 640, (g) => {
+    g.scale(2, 2); // drawn in 160×320 units at 2× resolution
     g.fillStyle = '#f7f7f2';
     g.fillRect(0, 0, 160, 320);
     // bars run across the sticker; the sticker sits vertically on the rack ear
@@ -554,7 +647,8 @@ export function rackFaceTex(rear: boolean, emissive: boolean, variant: number): 
  * you are not working on, so a full row costs one draw call per server instead of hundreds.
  */
 export function serverFaceTex(modelId: string, rear: boolean): THREE.CanvasTexture {
-  return canvasTex(`srvface${modelId}${rear}`, 512, 100, (g) => {
+  return canvasTex(`srvface${modelId}${rear}`, 1024, 200, (g) => {
+    g.scale(2, 2); // drawn in 512×100 units at 2× resolution
     const m = MODELS[modelId];
     const S = 116; // px per unit (4.4 wide → 510 px)
     const px = (x: number) => (rear ? 2.2 - x : x + 2.2) * S;

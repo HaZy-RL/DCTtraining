@@ -7,7 +7,7 @@ import { isTight } from '../../../engine/fasteners';
 import { cpuTemp, hasAC, healthLed, powerLed, slotLed } from '../../../engine/projectors';
 import type { Component, Device, Rack } from '../../../engine/types';
 import { useStore } from '../../store';
-import { driveLabelTex, serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
+import { bevelBox, driveLabelTex, serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
 
 export interface ServerMeshProps {
   dev: Device;
@@ -75,8 +75,8 @@ function Box({ l, mat, color, onClick, hover = true, emissive, opacity }: { l: S
           : undefined
       }
       material={mat && !hov && !emissive ? mat : undefined}
+      geometry={bevelBox(l.w, l.h, l.d, 0.012)}
     >
-      <boxGeometry args={[l.w, l.h, l.d]} />
       {(!mat || hov || emissive) && (
         <meshStandardMaterial
           color={color ?? (mat as THREE.MeshStandardMaterial)?.color ?? '#555'}
@@ -114,6 +114,8 @@ function Screw({ pos, tight, onClick, glow, r = 0.045, thumb = false, axis = 'y'
     </group>
   );
 }
+
+const hotGlowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ff4b2b').multiplyScalar(1.6), transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
 
 function Fan({ l, spinning, failed }: { l: SlotLayout; spinning: boolean; failed: boolean }) {
   const blade = useRef<THREE.Group>(null);
@@ -482,7 +484,12 @@ function Interior({ dev, ac, selSlot, highlightSlot, guide, onSlot, onFastener, 
         </group>
         )}
       </SlideAnim>
-      {running && cpuTemp(dev, 0) >= 85 && <pointLight position={[-1.1, 0.8, 0.6]} color="#ff4b2b" intensity={2} distance={2} />}
+      {/* Overheating CPU0: a glow shell, not a light (adding/removing a light recompiles every shader in the scene) */}
+      {running && cpuTemp(dev, 0) >= 85 && (
+        <mesh position={[-1.1, 0.45, 0.6]} material={hotGlowMat} raycast={() => null} renderOrder={5}>
+          <boxGeometry args={[1.15, 0.7, 1.15]} />
+        </mesh>
+      )}
     </group>
   );
 }
@@ -906,19 +913,30 @@ function Lid({ dev, guide, selected, onSlot, onFastener }: { dev: Device; guide?
 }
 
 /** One textured box + live LEDs: how every server you are not working on is drawn. */
+const lowMatCache = new Map<string, THREE.Material[]>();
+/** Shared per model: a full row is ~60 of these, so don't build six materials for each. */
+function lowServerMats(model: string): THREE.Material[] {
+  let m = lowMatCache.get(model);
+  if (!m) {
+    const side = new THREE.MeshStandardMaterial({ color: '#3a414b', metalness: 0.55, roughness: 0.45 });
+    m = [
+      side,
+      side,
+      new THREE.MeshStandardMaterial({ color: '#ffffff', map: lidTex(), metalness: 0.55, roughness: 0.45 }),
+      side,
+      new THREE.MeshStandardMaterial({ map: serverFaceTex(model, false), metalness: 0.5, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ map: serverFaceTex(model, true), metalness: 0.5, roughness: 0.5 }),
+    ];
+    lowMatCache.set(model, m);
+  }
+  return m;
+}
+
 function LowServer({ dev, ac, groupRef, target, onDevice }: { dev: Device; ac: boolean; groupRef: React.RefObject<THREE.Group | null>; target: THREE.Vector3; onDevice: () => void }) {
   const w = useStore.getState().world!;
   return (
     <group ref={groupRef} position={target}>
-      <mesh position={[0, H / 2, 0]} onClick={handler(onDevice)} {...hoverCursor()}>
-        <boxGeometry args={[4.4, H, CHASSIS_D]} />
-        <meshStandardMaterial attach="material-0" color="#3a414b" metalness={0.55} roughness={0.45} />
-        <meshStandardMaterial attach="material-1" color="#3a414b" metalness={0.55} roughness={0.45} />
-        <meshStandardMaterial attach="material-2" color="#ffffff" map={lidTex()} metalness={0.55} roughness={0.45} />
-        <meshStandardMaterial attach="material-3" color="#3a414b" metalness={0.55} roughness={0.45} />
-        <meshStandardMaterial attach="material-4" map={serverFaceTex(dev.model, false)} metalness={0.5} roughness={0.5} />
-        <meshStandardMaterial attach="material-5" map={serverFaceTex(dev.model, true)} metalness={0.5} roughness={0.5} />
-      </mesh>
+      <mesh position={[0, H / 2, 0]} onClick={handler(onDevice)} {...hoverCursor()} geometry={bevelBox(4.4, H, CHASSIS_D, 0.035)} material={lowServerMats(dev.model)} />
       <Led state={powerLed(w, dev) === 'green' ? 'green' : powerLed(w, dev) === 'amber' ? 'amber' : 'off'} position={[2.1, 0.72, FZ + 0.02]} size={0.035} />
       <Led state={healthLed(w, dev) === 'off' ? 'off' : healthLed(w, dev) === 'green' ? 'green' : healthLed(w, dev)} position={[2.1, 0.55, FZ + 0.02]} size={0.035} />
       {dev.locateLed && ac && <Led state="blue_blink" position={[2.1, 0.38, FZ + 0.02]} size={0.035} period={0.6} />}
@@ -948,8 +966,7 @@ function ServerMeshInner(p: ServerMeshProps) {
   return (
     <group ref={g} position={target}>
       {/* body */}
-      <mesh position={[0, H / 2, 0]} onClick={handler(() => p.onDevice(dev.id))} {...hoverCursor()} visible={!showInside}>
-        <boxGeometry args={[4.4, H, CHASSIS_D]} />
+      <mesh position={[0, H / 2, 0]} onClick={handler(() => p.onDevice(dev.id))} {...hoverCursor()} visible={!showInside} geometry={bevelBox(4.4, H, CHASSIS_D, 0.035)}>
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <meshStandardMaterial key={i} attach={`material-${i}`} color={i === 2 ? (p.selected ? '#c9d6e3' : '#ffffff') : p.selected ? '#4b5563' : '#3a414b'} map={i === 2 && lod === 'full' ? lidTex() : null} metalness={0.55} roughness={0.45} emissive={p.selected ? '#103040' : '#000'} />
         ))}

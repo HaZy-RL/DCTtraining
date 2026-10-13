@@ -17,8 +17,10 @@
   --silver: #cbd5e0;
   --bronze: #dd8b4f;
   --radius: 10px;
-  --mono: ui-monospace, 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, Inter, sans-serif;
+  /* System colour-emoji fonts first; the bundled subset (src/emoji-font.css) only loads where none exists. */
+  --emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'DCT Emoji';
+  --mono: ui-monospace, 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace, var(--emoji);
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, Inter, sans-serif, var(--emoji);
   color-scheme: dark;
 }
 
@@ -1022,6 +1024,41 @@ table.t tr.click:hover td {
   max-height: 58%;
 }
 
+/* Objectives (top) and inspector (bottom) share one column: they shrink to fit instead of overlapping. */
+.left-stack {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 10px;
+  width: min(440px, 46%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 3;
+}
+.left-stack > .overlay {
+  position: relative;
+  inset: auto;
+  min-height: 0;
+  flex: 0 1 auto;
+  max-height: none;
+}
+.left-stack > .objectives {
+  width: min(360px, 100%);
+  min-height: 44px;
+}
+.left-stack > .inspector {
+  width: 100%;
+  margin-top: auto;
+  min-height: 120px;
+}
+/* scene buttons stay clear of the left column */
+.scene-ctrl {
+  max-width: calc(54% - 30px);
+  z-index: 4;
+}
+
 /* fasteners in the inspector */
 .fasteners {
   margin: 6px 0;
@@ -1116,8 +1153,8 @@ body[data-theme='site'] {
   --accent: #76b900;
   --accent2: #06b6d4;
   --gold: #f6d55c;
-  --mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --sans: 'Inter', 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace, var(--emoji);
+  --sans: 'Inter', 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif, var(--emoji);
   background: #090d16;
 }
 body[data-theme='site']::before {
@@ -1690,4 +1727,13 @@ body[data-theme='site'] h2 {
   min-height: 0;
   overflow: auto;
   padding: 14px;
+}
+
+@media (max-width: 860px) {
+  .left-stack {
+    width: calc(100% - 20px);
+  }
+  .scene-ctrl {
+    max-width: calc(100% - 20px);
+  }
 }

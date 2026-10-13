@@ -1,8 +1,16 @@
 // Shared lighting + post-processing for every 3D scene: image-based reflections from soft light panels,
 // ambient occlusion for contact shadows, bloom so LEDs glow, SMAA edges and a light vignette.
-import { Environment, Lightformer } from '@react-three/drei';
+import { Environment, Lightformer, PerformanceMonitor } from '@react-three/drei';
+import { useThree } from '@react-three/fiber';
 import { Bloom, EffectComposer, N8AO, SMAA, Vignette } from '@react-three/postprocessing';
 import { useStore } from '../../store';
+
+/** Drop to 1× pixel ratio when the frame rate sags, and go back up (to 1.5× at most) when there's headroom. */
+function AdaptiveResolution() {
+  const setDpr = useThree((s) => s.setDpr);
+  const hi = Math.min(1.5, window.devicePixelRatio || 1);
+  return <PerformanceMonitor flipflops={4} onIncline={() => setDpr(hi)} onDecline={() => setDpr(1)} onFallback={() => setDpr(1)} />;
+}
 
 export function Look({ aoRadius = 2, aoIntensity = 2.2, bloom = 0.9, envIntensity = 1 }: { aoRadius?: number; aoIntensity?: number; bloom?: number; envIntensity?: number }) {
   const quality = useStore((s) => s.progress.settings.quality);
@@ -15,6 +23,7 @@ export function Look({ aoRadius = 2, aoIntensity = 2.2, bloom = 0.9, envIntensit
         <Lightformer intensity={0.6 * envIntensity} color="#9fd3ff" position={[40, 10, 0]} rotation-y={-Math.PI / 2} scale={[40, 12, 1]} />
         <Lightformer intensity={0.5 * envIntensity} color="#ffe2b8" position={[-40, 10, 0]} rotation-y={Math.PI / 2} scale={[40, 12, 1]} />
       </Environment>
+      {quality === 'high' && <AdaptiveResolution />}
       {quality === 'high' && (
         <EffectComposer multisampling={0} enableNormalPass={false}>
           <N8AO aoRadius={aoRadius} intensity={aoIntensity} distanceFalloff={1} quality="medium" halfRes />

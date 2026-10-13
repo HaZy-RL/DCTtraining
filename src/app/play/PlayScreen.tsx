@@ -5,7 +5,7 @@ import { nextPendingAt } from '../../engine/sim';
 import { fmtSimClock, fmtTime } from '../format';
 import { useStore, type Panel } from '../store';
 import { Objectives } from './Objectives';
-import { SceneHost } from './SceneHost';
+import { SceneHost, SceneInspector } from './SceneHost';
 import { SidePanel } from './SidePanel';
 import { TerminalDock } from './TerminalDock';
 import { Toasts } from './Toasts';
@@ -206,7 +206,10 @@ export default function PlayScreen() {
       <ToolDock />
       <div className="main">
         <SceneHost />
-        <Objectives />
+        <div className="left-stack">
+          <Objectives />
+          <SceneInspector />
+        </div>
         <Toasts />
       </div>
       {panel && <SidePanel />}

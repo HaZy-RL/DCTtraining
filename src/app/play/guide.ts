@@ -12,15 +12,21 @@ export interface CoachState {
   visible: boolean;
 }
 
-export function useCoach(): CoachState {
-  const inst = useStore((s) => s.inst);
-  const world = useStore((s) => s.world);
-  const mode = useStore((s) => s.mode);
-  const revealed = useStore((s) => s.coachRevealed);
-  return useMemo(() => {
-    if (!inst || !world) return { step: null, lines: [], current: null, visible: false };
+type StoreState = ReturnType<typeof useStore.getState>;
+type CoachInputs = Pick<StoreState, 'inst' | 'world' | 'mode' | 'coachRevealed'>;
+
+// One evaluation per store snapshot, shared by every hook that asks (the clock ticks twice a second).
+let cacheKey: [unknown, unknown, unknown, unknown] | null = null;
+let cacheVal: CoachState | null = null;
+
+function coachFor(s: CoachInputs): CoachState {
+  const { inst, world, mode, coachRevealed: revealed } = s;
+  if (cacheKey && cacheVal && cacheKey[0] === inst && cacheKey[1] === world && cacheKey[2] === mode && cacheKey[3] === revealed) return cacheVal;
+  let out: CoachState;
+  if (!inst || !world) out = { step: null, lines: [], current: null, visible: false };
+  else {
     const r = evaluate({ ...inst, world }, mode);
-    const i = r.steps.findIndex((s) => !s.done && s.required && !s.guard);
+    const i = r.steps.findIndex((st) => !st.done && st.required && !st.guard);
     const step = i >= 0 ? inst.steps[i] : null;
     let lines: CoachLine[] = [];
     try {
@@ -29,8 +35,31 @@ export function useCoach(): CoachState {
       lines = [];
     }
     const visible = !!step && (mode === 'learn' || (mode === 'practice' && !!revealed[step.id]));
-    return { step, lines, current: lines.find((l) => !l.done) ?? null, visible };
-  }, [inst, world, mode, revealed]);
+    out = { step, lines, current: lines.find((l) => !l.done) ?? null, visible };
+  }
+  cacheKey = [inst, world, mode, revealed];
+  cacheVal = out;
+  return out;
+}
+
+export function useCoach(): CoachState {
+  const inst = useStore((s) => s.inst);
+  const world = useStore((s) => s.world);
+  const mode = useStore((s) => s.mode);
+  const coachRevealed = useStore((s) => s.coachRevealed);
+  return coachFor({ inst, world, mode, coachRevealed });
+}
+
+/**
+ * Just the coach's current 3D target (when the checklist is visible). Only re-renders when the target itself changes,
+ * so the 3D scene isn't rebuilt on every clock tick.
+ */
+export function useCoachTarget(): CoachTarget | undefined {
+  const key = useStore((s) => {
+    const c = coachFor(s);
+    return c.visible && c.current?.target ? JSON.stringify(c.current.target) : '';
+  });
+  return useMemo(() => (key ? (JSON.parse(key) as CoachTarget) : undefined), [key]);
 }
 
 /** Map a guide key to what the inspector should select for it. */

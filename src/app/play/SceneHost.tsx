@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { useWalker } from '../scenes/three/walker';
-import { useCoach } from './guide';
+import { useCoachTarget } from './guide';
 import { useStore } from '../store';
 import { DeskScene } from '../scenes/DeskScene';
 import { QuizScene } from '../scenes/QuizScene';
@@ -18,7 +18,8 @@ function SceneControls() {
   const goAisle = useStore((s) => s.goAisle);
   const select = useStore((s) => s.select);
   const inst = useStore((s) => s.inst!);
-  const w = useStore((s) => s.world!);
+  const racks = useStore((s) => s.world!.racks);
+  const location = useStore((s) => s.world!.trainee.location);
   const sel = useStore((s) => s.sel);
   const camMode = useStore((s) => s.camMode);
   const setCamMode = useStore((s) => s.setCamMode);
@@ -53,15 +54,15 @@ function SceneControls() {
       <button className="btn sm" onClick={() => select({ rackId })}>
         ⟲ Rack view
       </button>
-      {rackId && w.trainee.location !== rackId && (
+      {rackId && location !== rackId && (
         <button className="btn sm primary" onClick={() => dispatch({ type: 'walk', to: rackId, side: view })}>
           🚶 Walk here
         </button>
       )}
-      {Object.values(w.racks).filter((r) => r.row === w.racks[rackId ?? '']?.row).length > 1 && (
+      {Object.values(racks).filter((r) => r.row === racks[rackId ?? '']?.row).length > 1 && (
         <select value={rackId} onChange={(e) => select({ rackId: e.target.value })} style={{ fontSize: 12 }}>
-          {Object.values(w.racks)
-            .filter((r) => r.row === w.racks[rackId ?? '']?.row)
+          {Object.values(racks)
+            .filter((r) => r.row === racks[rackId ?? '']?.row)
             .sort((a, b) => a.position - b.position)
             .map((r) => (
               <option key={r.id} value={r.id}>
@@ -92,16 +93,17 @@ function ScannerHud() {
 /** Crosshair, controls help and a top-down minimap while walking. */
 function WalkHud() {
   const camMode = useStore((s) => s.camMode);
-  const w = useStore((s) => s.world!);
+  const racks = useStore((s) => s.world!.racks);
+  const location = useStore((s) => s.world!.trainee.location);
   const inst = useStore((s) => s.inst!);
   const sel = useStore((s) => s.sel);
   const wk = useWalker();
-  const coach = useCoach();
+  const gt = useCoachTarget();
   if (camMode !== 'walk') return null;
-  const focus = w.racks[sel.rackId ?? inst.focusRackId ?? ''] ?? Object.values(w.racks)[0];
-  const origin = w.racks[inst.focusRackId ?? focus.id]?.position ?? focus.position;
-  const row = Object.values(w.racks).filter((r) => r.row === focus.row);
-  const target = coach.visible && coach.current?.target?.rackId ? coach.current.target.rackId : focus.id;
+  const focus = racks[sel.rackId ?? inst.focusRackId ?? ''] ?? Object.values(racks)[0];
+  const origin = racks[inst.focusRackId ?? focus.id]?.position ?? focus.position;
+  const row = Object.values(racks).filter((r) => r.row === focus.row);
+  const target = gt?.rackId ?? focus.id;
   // map: x in scene units → px; z likewise
   const S = 2.2;
   const cx = 110;
@@ -121,7 +123,7 @@ function WalkHud() {
         {row.map((r) => {
           const x = (r.position - origin) * 6.15;
           const isT = r.id === target;
-          const here = r.id === w.trainee.location;
+          const here = r.id === location;
           return <rect key={r.id} x={px(x) - 6.6} y={cz - 5.9} width={13.2} height={11.8} fill={isT ? '#ffd166' : here ? '#2bb3a3' : '#4a5563'} stroke="#0b0f14" strokeWidth={1} />;
         })}
         <text x={8} y={16} fill="#9fd3ff" fontSize={10}>
@@ -136,6 +138,12 @@ function WalkHud() {
       </svg>
     </>
   );
+}
+
+/** The inspector for the 3D rack scenes; PlayScreen stacks it under the objectives so the two never overlap. */
+export function SceneInspector() {
+  const scene = useStore((s) => s.inst!.scene);
+  return scene === 'rack' || scene === 'rackbuild' ? <Inspector buildMode={scene === 'rackbuild'} /> : null;
 }
 
 const Loading = () => <div className="bench muted">Loading 3D…</div>;
@@ -153,7 +161,6 @@ export function SceneHost() {
           <SceneControls />
           <WalkHud />
           <ScannerHud />
-          <Inspector buildMode={scene === 'rackbuild'} />
         </>
       );
     case 'floor':

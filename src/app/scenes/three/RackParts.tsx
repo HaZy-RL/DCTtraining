@@ -1,11 +1,12 @@
 import type { ThreeEvent } from '@react-three/fiber';
-import { memo, useMemo } from 'react';
+import { Text } from '@react-three/drei';
+import { memo, Suspense, useMemo } from 'react';
 import * as THREE from 'three';
 import { MODELS } from '../../../engine/catalog';
 import { hasAC, linkState, parseOutlet } from '../../../engine/projectors';
 import type { Cable, Device, Rack, World } from '../../../engine/types';
 import { useStore } from '../../store';
-import { deviceOrigin, Label, Led, MAT, pduTex, postTex, rackFaceTex, switchFaceTex, outletWorld, PDU_X, PDU_Z, PLINTH, portLocal, portWorld, RACK_D, RACK_W, U, uBaseY } from './common';
+import { bevelBox, canvasTex, deviceOrigin, flatMat, Label, LABEL_FONT, Led, MAT, pduTex, postTex, rackFaceTex, switchFaceTex, outletWorld, PDU_X, PDU_Z, PLINTH, portLocal, portWorld, RACK_D, RACK_W, U, uBaseY } from './common';
 
 // ---------- switch ----------
 
@@ -17,8 +18,7 @@ function SwitchMeshInner({ dev, x, selected, pendingPort, onDevice, onPort, lod 
   if (lod === 'low')
     return (
       <group position={pos}>
-        <mesh position={[0, U / 2 - 0.01, 0]} onClick={(e) => (e.stopPropagation(), onDevice(dev.id))}>
-          <boxGeometry args={[4.4, U - 0.02, 4.5]} />
+        <mesh position={[0, U / 2 - 0.01, 0]} onClick={(e) => (e.stopPropagation(), onDevice(dev.id))} geometry={bevelBox(4.4, U - 0.02, 4.5, 0.025)}>
           {[0, 1, 2, 3, 4].map((i) => (
             <meshStandardMaterial key={i} attach={`material-${i}`} color={dev.role === 'switch' ? '#20262e' : '#1f2b3a'} metalness={0.5} roughness={0.5} />
           ))}
@@ -35,8 +35,8 @@ function SwitchMeshInner({ dev, x, selected, pendingPort, onDevice, onPort, lod 
           e.stopPropagation();
           onDevice(dev.id);
         }}
+        geometry={bevelBox(4.4, U - 0.02, 4.5, 0.025)}
       >
-        <boxGeometry args={[4.4, U - 0.02, 4.5]} />
         <meshStandardMaterial color={dev.role === 'switch' ? '#20262e' : '#1f2b3a'} metalness={0.5} roughness={0.5} emissive={selected ? '#103040' : '#000'} />
       </mesh>
       {m.ports.map((p) => {
@@ -73,25 +73,19 @@ export const SwitchMesh = memo(SwitchMeshInner);
 
 function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hoverU }: { rack: Rack; x: number; here: boolean; selected: boolean; onRack: (id: string) => void; buildMode?: boolean; onU?: (u: number) => void; hoverU?: number | null }) {
   const h = rack.heightU * U + PLINTH + 0.6;
-  const uTex = useMemo(() => {
-    const c = document.createElement('canvas');
-    c.width = 64;
-    c.height = 42 * 32;
-    const g = c.getContext('2d')!;
-    g.fillStyle = '#2b3038';
-    g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = '#cbd5e0';
-    g.font = 'bold 18px monospace';
-    g.textAlign = 'center';
-    for (let u = 1; u <= 42; u++) {
-      const y = c.height - (u - 0.5) * 32;
-      g.fillText(String(u), 32, y + 6);
-      g.fillRect(4, c.height - u * 32, 56, 2);
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }, []);
+  // U strip: tick marks as a texture, the numbers as SDF text (one mesh per strip) so they stay sharp edge-on.
+  const uTex = useMemo(
+    () =>
+      canvasTex(`ustrip${rack.heightU}`, 32, rack.heightU * 32, (g) => {
+        g.fillStyle = '#2b3038';
+        g.fillRect(0, 0, 32, rack.heightU * 32);
+        g.fillStyle = '#7d8896';
+        for (let u = 1; u < rack.heightU; u++) g.fillRect(3, u * 32 - 1, 26, 2);
+      }),
+    [rack.heightU],
+  );
+  const uNumbers = useMemo(() => Array.from({ length: rack.heightU }, (_, i) => String(rack.heightU - i)).join('\n'), [rack.heightU]);
+  const uStripH = rack.heightU * U;
   const posts: Array<[number, number]> = [
     [-2.55, 4.95],
     [2.55, 4.95],
@@ -101,12 +95,8 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
   return (
     <group position={[x, 0, 0]}>
       {/* plinth + roof */}
-      <mesh position={[0, PLINTH / 2, 0]} material={MAT.rack} onClick={(e) => (e.stopPropagation(), onRack(rack.id))}>
-        <boxGeometry args={[RACK_W, PLINTH, RACK_D]} />
-      </mesh>
-      <mesh position={[0, h - 0.15, 0]} material={MAT.rack} onClick={(e) => (e.stopPropagation(), onRack(rack.id))}>
-        <boxGeometry args={[RACK_W, 0.3, RACK_D]} />
-      </mesh>
+      <mesh position={[0, PLINTH / 2, 0]} material={MAT.rack} geometry={bevelBox(RACK_W, PLINTH, RACK_D, 0.06)} onClick={(e) => (e.stopPropagation(), onRack(rack.id))} />
+      <mesh position={[0, h - 0.15, 0]} material={MAT.rack} geometry={bevelBox(RACK_W, 0.3, RACK_D, 0.06)} onClick={(e) => (e.stopPropagation(), onRack(rack.id))} />
       {/* side panels (thin, dark) */}
       {[-RACK_W / 2, RACK_W / 2].map((sx) => (
         <mesh key={sx} position={[sx, h / 2, 0]} onClick={(e) => (e.stopPropagation(), onRack(rack.id))}>
@@ -115,20 +105,29 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
         </mesh>
       ))}
       {posts.map(([px, pz], i) => (
-        <mesh key={i} position={[px, PLINTH + (rack.heightU * U) / 2, pz]}>
-          <boxGeometry args={[0.18, rack.heightU * U, 0.08]} />
+        <mesh key={i} position={[px, PLINTH + (rack.heightU * U) / 2, pz]} geometry={bevelBox(0.18, rack.heightU * U, 0.08, 0.015)}>
           <meshStandardMaterial map={postTex()} metalness={0.7} roughness={0.4} />
         </mesh>
       ))}
       {/* U labels on front and rear left posts */}
-      <mesh position={[-2.67, PLINTH + (rack.heightU * U) / 2, 5.0]}>
-        <planeGeometry args={[0.18, rack.heightU * U]} />
-        <meshBasicMaterial map={uTex} toneMapped={false} />
-      </mesh>
-      <mesh position={[2.67, PLINTH + (rack.heightU * U) / 2, -5.0]} rotation={[0, Math.PI, 0]}>
-        <planeGeometry args={[0.18, rack.heightU * U]} />
-        <meshBasicMaterial map={uTex} toneMapped={false} />
-      </mesh>
+      {(
+        [
+          [-2.69, 5.0, 0],
+          [2.69, -5.0, Math.PI],
+        ] as const
+      ).map(([ux, uz, ry]) => (
+        <group key={uz} position={[ux, PLINTH + uStripH / 2, uz]} rotation={[0, ry, 0]}>
+          <mesh>
+            <planeGeometry args={[0.26, uStripH]} />
+            <meshBasicMaterial map={uTex} toneMapped={false} />
+          </mesh>
+          <Suspense fallback={null}>
+            <Text font={LABEL_FONT} fontSize={0.16} lineHeight={U / 0.16} material={flatMat('#dbe3ec')} anchorX="center" anchorY="middle" textAlign="center" position={[0, 0, 0.002]} depthOffset={-2} raycast={() => null}>
+              {uNumbers}
+            </Text>
+          </Suspense>
+        </group>
+      ))}
       {/* location sign */}
       <Label text={rack.location} position={[0, h + 0.35, 5.36]} size={[3.2, 0.42]} opts={{ bg: here ? '#1f6f6a' : '#0e141b', fg: '#e6edf3', w: 512, h: 68 }} />
       <Label text={rack.location} position={[0, h + 0.35, -5.36]} rotation={[0, Math.PI, 0]} size={[3.2, 0.42]} opts={{ bg: here ? '#1f6f6a' : '#0e141b', fg: '#e6edf3', w: 512, h: 68 }} />
@@ -181,7 +180,7 @@ function RackFrameInner({ rack, x, here, selected, onRack, buildMode, onU, hover
 export const RackFrame = memo(RackFrameInner);
 
 /** Filler rack for atmosphere (not in the world): a full rack of nodes with glowing LEDs, front and rear. */
-export function DummyRack({ x, z = 0, flip = false }: { x: number; z?: number; flip?: boolean }) {
+function DummyRackInner({ x, z = 0, flip = false }: { x: number; z?: number; flip?: boolean }) {
   const variant = Math.abs(Math.round(x * 7 + z)) % 4;
   const h = 42 * U + PLINTH + 0.6;
   const face = (rear: boolean) => (
@@ -197,8 +196,7 @@ export function DummyRack({ x, z = 0, flip = false }: { x: number; z?: number; f
   );
   return (
     <group position={[x, 0, z]} rotation={[0, flip ? Math.PI : 0, 0]}>
-      <mesh position={[0, h / 2, 0]}>
-        <boxGeometry args={[RACK_W, h, RACK_D]} />
+      <mesh position={[0, h / 2, 0]} geometry={bevelBox(RACK_W, h, RACK_D, 0.07)}>
         {[0, 1, 2, 3].map((i) => (
           <meshStandardMaterial key={i} attach={`material-${i}`} color="#15181d" metalness={0.5} roughness={0.6} />
         ))}
@@ -208,6 +206,7 @@ export function DummyRack({ x, z = 0, flip = false }: { x: number; z?: number; f
     </group>
   );
 }
+export const DummyRack = memo(DummyRackInner);
 
 // ---------- cables ----------
 
@@ -230,7 +229,8 @@ function curveFor(a: THREE.Vector3, b: THREE.Vector3, side: number): THREE.Catmu
 }
 
 function CableTube({ cable, a, b, side, selected, onClick, plugs }: { cable: Cable; a: THREE.Vector3; b: THREE.Vector3; side: number; selected: boolean; onClick: (id: string) => void; plugs: boolean }) {
-  const geo = useMemo(() => new THREE.TubeGeometry(curveFor(a, b, side), 24, cable.type === 'cat6' ? 0.022 : 0.03, 5, false), [a.x, a.y, a.z, b.x, b.y, b.z, side, cable.type]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Round, smooth tubes on the rack you're working at; cheaper ones elsewhere.
+  const geo = useMemo(() => new THREE.TubeGeometry(curveFor(a, b, side), plugs ? 48 : 20, cable.type === 'cat6' ? 0.022 : 0.03, plugs ? 8 : 5, false), [a.x, a.y, a.z, b.x, b.y, b.z, side, cable.type, plugs]); // eslint-disable-line react-hooks/exhaustive-deps
   const color = cable.condition === 'damaged' ? '#7a2b2b' : CABLE_COLORS[cable.type] ?? '#111';
   return (
     <group>
@@ -292,7 +292,7 @@ function Plug({ at, type, color }: { at: THREE.Vector3; type: Cable['type'] | 'p
   );
 }
 
-export function Cables({ w, originPos, rackIds, selCable, onCable, detailRack }: { w: World; originPos: number; rackIds: Set<string>; selCable?: string; onCable: (id: string) => void; detailRack?: string }) {
+function CablesInner({ w, originPos, rackIds, selCable, onCable, detailRack }: { w: World; originPos: number; rackIds: Set<string>; selCable?: string; onCable: (id: string) => void; detailRack?: string }) {
   const items: Array<{ c: Cable; a: THREE.Vector3; b: THREE.Vector3; side: number }> = [];
   for (const c of Object.values(w.cables)) {
     const ends = [c.a, c.b].filter(Boolean) as NonNullable<Cable['a']>[];
@@ -333,12 +333,13 @@ export function Cables({ w, originPos, rackIds, selCable, onCable, detailRack }:
     </group>
   );
 }
+export const Cables = memo(CablesInner);
 
 function PowerCord({ a, b, side, plug }: { a: THREE.Vector3; b: THREE.Vector3; side: 'A' | 'B'; plug: boolean }) {
   const geo = useMemo(() => {
     const pts = [a.clone(), a.clone().add(new THREE.Vector3(0, -0.08, -0.35)), new THREE.Vector3(b.x - Math.sign(b.x - a.x) * 0.25, a.y - 0.12, b.z - 0.2), b.clone().add(new THREE.Vector3(0, 0, -0.18)), b.clone()];
-    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 16, 0.03, 5, false);
-  }, [a.x, a.y, a.z, b.x, b.y, b.z]); // eslint-disable-line react-hooks/exhaustive-deps
+    return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), plug ? 32 : 16, 0.03, plug ? 8 : 5, false);
+  }, [a.x, a.y, a.z, b.x, b.y, b.z, plug]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <group>
       {plug && <Plug at={a} type="power" color="#111" />}
