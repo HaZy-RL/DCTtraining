@@ -65,7 +65,7 @@ export function MainMenu() {
                 </button>
               ) : next ? (
                 <button className="btn primary xl" onClick={() => start(next.id, prog.scenarios[next.id] ? 'practice' : 'learn')}>
-                  ▶ Next mission: {next.title}
+                  Next mission: {next.title}
                 </button>
               ) : (
                 <button className="btn primary xl" onClick={() => go({ name: 'progress' })}>
