@@ -10,8 +10,9 @@ import type { PortRef, Rack, World } from '../../engine/types';
 import { useShallow } from 'zustand/react/shallow';
 import { useCoachTarget } from '../play/guide';
 import { useStore } from '../store';
-import { blankTex, canvasTex, deviceOrigin, FRONT_RAIL_Z, GuideBeacon, MAT, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, U, uBaseY, ventTileTex } from './three/common';
+import { blankTex, canvasTex, deviceOrigin, FRONT_RAIL_Z, GuideBeacon, pointerGuard, RACK_D, RACK_PITCH, RACK_W, rackX, U, uBaseY, ventTileTex } from './three/common';
 import { Cables, DummyRack, RackFrame, SwitchMesh } from './three/RackParts';
+import { Overhead } from './three/Overhead';
 import { ServerMesh } from './three/ServerMesh';
 import { ROOM, roomSpots, Workroom, SHELF_KINDS } from './three/Workroom';
 import type { ComponentKind } from '../../engine/types';
@@ -635,14 +636,8 @@ export function RackScene({ buildMode = false }: { buildMode?: boolean }) {
       <Look />
       <BlankingPanels racks={racks} origin={origin} buildRackId={buildMode ? focusRack.id : undefined} />
       <Hall minX={(minP - origin) * RACK_PITCH} maxX={(maxP - origin) * RACK_PITCH} minP={minP} maxP={maxP} origin={origin} />
-      {/* overhead cable trays */}
-      <mesh position={[((minP + maxP) / 2 - origin) * RACK_PITCH, 21.8, -3]} material={MAT.post}>
-        <boxGeometry args={[(maxP - minP + 1) * RACK_PITCH, 0.15, 1.5]} />
-      </mesh>
-      <mesh position={[((minP + maxP) / 2 - origin) * RACK_PITCH, 22.4, 2.5]}>
-        <boxGeometry args={[(maxP - minP + 1) * RACK_PITCH, 0.12, 1.0]} />
-        <meshStandardMaterial color="#c9a227" metalness={0.5} roughness={0.5} />
-      </mesh>
+      {/* overhead busways, basket trays, fiber raceway and every rack's drops */}
+      <Overhead origin={origin} minP={minP} maxP={maxP} realPositions={positions} roomX0={roomX0} oppositeZ={OPPOSITE_Z} lowDetail={quality !== 'high'} />
       {racks.map((r) => (
         <RackFrame key={r.id} rack={r} x={rackX(r, origin)} here={w.trainee.location === r.id} selected={focusRack.id === r.id} onRack={onRack} buildMode={buildMode && r.id === focusRack.id} onU={onU} hoverU={sel.u ?? null} />
       ))}
