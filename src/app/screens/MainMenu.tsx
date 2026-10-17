@@ -73,7 +73,7 @@ export function MainMenu() {
                 </button>
               )}
               <button className="btn xl daily" onClick={() => start(daily.id, 'challenge', daily.seed)} title={dailyDef.summary}>
-                🎯 Daily drill <small>{dailyDef.title}</small>
+                Daily drill <small>{dailyDef.title}</small>
               </button>
             </div>
           </div>
@@ -132,19 +132,19 @@ export function MainMenu() {
             </div>
             <div className="pc-stats">
               <div>
-                <b>⭐ {stars}</b>
+                <b>{stars}</b>
                 <span>stars</span>
               </div>
               <div>
-                <b>🥇 {golds}</b>
+                <b>{golds}</b>
                 <span>golds</span>
               </div>
               <div>
-                <b>🔥 {streak}</b>
+                <b>{streak}</b>
                 <span>day streak</span>
               </div>
               <div>
-                <b>🛠 {prog.history.length}</b>
+                <b>{prog.history.length}</b>
                 <span>reps</span>
               </div>
             </div>
