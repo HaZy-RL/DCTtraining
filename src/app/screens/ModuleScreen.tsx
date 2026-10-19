@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { MODULES, scenariosFor } from '../../content';
 import type { Mode } from '../../engine/scenario';
+import { VENDORS } from '../../engine/vendors';
 import { TopNav } from '../App';
+import { VendorLogo } from '../brand';
 import { starsFor } from '../progress';
 import { useStore } from '../store';
 
@@ -26,10 +28,35 @@ export function ModuleScreen({ moduleId }: { moduleId: string }) {
           ← All modules
         </button>
         <div className="hero" style={{ paddingTop: 10 }}>
-          <h1>
-            {m.icon} {m.title}
-          </h1>
+          {m.vendor ? (
+            <div className="row" style={{ gap: 16, alignItems: 'center' }}>
+              <VendorLogo vendor={m.vendor} width={150} height={44} />
+              <h1 style={{ margin: 0 }}>{VENDORS[m.vendor].family}</h1>
+            </div>
+          ) : (
+            <h1>
+              {m.icon} {m.title}
+            </h1>
+          )}
           <p>{m.blurb}</p>
+          {m.vendor && (
+            <div className="card vendor-brief">
+              <div>
+                <b>Management controller</b>
+                <span>
+                  {VENDORS[m.vendor].bmc.product} ({VENDORS[m.vendor].bmc.short}): {VENDORS[m.vendor].bmc.logName}, {VENDORS[m.vendor].bmc.cli} over SSH, default user <code>{VENDORS[m.vendor].bmc.defaultUser}</code>
+                </span>
+              </div>
+              <div>
+                <b>Touch points</b>
+                <span>{VENDORS[m.vendor].touchPoints}</span>
+              </div>
+              <div>
+                <b>Parts and dispatch</b>
+                <span>{VENDORS[m.vendor].dispatch}</span>
+              </div>
+            </div>
+          )}
         </div>
         <div className="card row wrap" style={{ marginBottom: 14 }}>
           <b>Mode:</b>

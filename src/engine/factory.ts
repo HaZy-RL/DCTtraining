@@ -1,6 +1,7 @@
 // Builders that create realistic world state from the catalog.
 import { MODELS, partSpec } from './catalog';
 import { Rng } from './rng';
+import { VENDORS, type VendorId } from './vendors';
 import type { Cable, Component, ComponentKind, Device, Pdu, Rack, SlotDef, World } from './types';
 
 export const SITE = 'PHX1';
@@ -34,7 +35,7 @@ export function makeComponent(rng: Rng, pn: string, overrides: Partial<Component
     uid: uid(),
     kind: spec.kind,
     partNumber: pn,
-    serial: serialFor(rng, spec.kind),
+    serial: spec.vendor ? VENDORS[spec.vendor].partSerial(rng, spec.kind, pn) : serialFor(rng, spec.kind),
     health: 'ok',
     seated: true,
     dataBearing: spec.dataBearing,
@@ -148,7 +149,7 @@ export function createDevice(
     model: modelId,
     role: m.role,
     hostname: opts.hostname,
-    serial: (m.role === 'server' ? 'HX' : 'TX') + rng.alnum(8),
+    serial: m.vendor ? VENDORS[m.vendor].chassisSerial(rng) : (m.role === 'server' ? 'HX' : 'TX') + rng.alnum(8),
     assetTag: `AT${rng.int(100000, 999999)}`,
     rackId: opts.rackId,
     u: opts.u,
@@ -168,7 +169,9 @@ export function createDevice(
     sel: [],
     selSeq: 0,
     locateLed: false,
-    bmc: { ip: opts.bmcIp ?? '0.0.0.0', mac: rng.mac('3C:EC:EF'), responsive: true, fw: `BMC ${rng.int(2, 4)}.${rng.int(10, 80)}.${rng.int(0, 9)}` },
+    bmc: m.vendor
+      ? { ip: opts.bmcIp ?? '0.0.0.0', mac: rng.mac(VENDORS[m.vendor].oui), responsive: true, fw: VENDORS[m.vendor].bmcFw(rng) }
+      : { ip: opts.bmcIp ?? '0.0.0.0', mac: rng.mac('3C:EC:EF'), responsive: true, fw: `BMC ${rng.int(2, 4)}.${rng.int(10, 80)}.${rng.int(0, 9)}` },
     drained: false,
     bootOrder: ['NVMe: M.2 Boot 0', 'NVMe: M.2 Boot 1', 'PXE: OCP0 Port 0', 'UEFI Shell'],
     macs: { nic0p0: rng.mac(), nic0p1: rng.mac() },
@@ -263,7 +266,7 @@ export function buildRack(world: World, rng: Rng, opts: RackBuildOpts): Rack {
 }
 
 /** Standard production rack layout: compute + a couple of storage nodes. */
-export function standardRackServers(rng: Rng, opts: { storageCount?: number; count?: number } = {}) {
+export function standardRackServers(rng: Rng, opts: { storageCount?: number; count?: number; vendor?: VendorId } = {}) {
   // Fill the rack: 2U nodes from U3 up to U40 (U41/U42 hold the OOB and ToR switches).
   const count = opts.count ?? 19;
   const storageCount = opts.storageCount ?? 2;
@@ -271,7 +274,8 @@ export function standardRackServers(rng: Rng, opts: { storageCount?: number; cou
   // heaviest (storage) at the bottom
   let u = 3;
   for (let i = 0; i < count; i++) {
-    out.push({ model: i < storageCount ? 'hx-2412s' : 'hx-2208c', u });
+    const models = opts.vendor ? VENDORS[opts.vendor].models : null;
+    out.push({ model: i < storageCount ? (models?.storage.id ?? 'hx-2412s') : (models?.compute.id ?? 'hx-2208c'), u });
     u += 2;
   }
   void rng;

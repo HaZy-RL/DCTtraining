@@ -7,6 +7,8 @@ import { ipmitoolCmd, selLines } from './ipmitool';
 import { linuxPack } from './linux';
 import { bmcReachable, hostIp, pingOut, prodReachable, resolve } from './net';
 import { solHandler } from './sol';
+import { remoteRacadm, VENDOR_PROMPT, vendorBanner, vendorBmcPack } from './vendorcli';
+import { VENDORS, type VendorId } from '../vendors';
 
 const JUMP = 'dco-jump01';
 
@@ -50,6 +52,12 @@ function ssh(ctx: CmdCtx): CmdOut {
   const d = r.dev;
   if (r.plane === 'bmc') {
     if (!bmcReachable(ctx.w, d)) return { err: `ssh: connect to host ${host} port 22: Connection timed out`, code: 255 };
+    const v: VendorId | undefined = MODELS[d.model].vendor;
+    if (v) {
+      ctx.session.push({ kind: 'bmc', deviceId: d.id, user: user === 'dcotech' ? VENDORS[v].bmc.defaultUser : user, hostLabel: `${d.hostname}-bmc`, cwd: '/', prompt: VENDOR_PROMPT[v], state: { vendor: v } });
+      ctx.api.dispatch({ type: 'setFlag', name: `bmc_ssh:${d.id}` });
+      return { out: vendorBanner(v, d, ctx.w) };
+    }
     ctx.session.push({ kind: 'bmc', deviceId: d.id, user: user === 'dcotech' ? 'admin' : user, hostLabel: `${d.hostname}-bmc`, cwd: '/admin1' });
     ctx.api.dispatch({ type: 'setFlag', name: `bmc_ssh:${d.id}` });
     return { out: `${d.hostname}-bmc  ${d.bmc.fw}\nType "help" for a list of commands.` };
@@ -153,6 +161,7 @@ const JUMP_HELP = `\x1b[1mJump host (${JUMP}) — your gateway to the fleet\x1b[
               sdr | sdr type Fan | fru | mc info | mc reset cold | sol activate
               chassis identify force|0 | chassis bootdev disk|pxe
   curl -k -u admin:$PW https://<host>-bmc/redfish/v1/Systems/1   (Redfish API)
+  racadm -r <host>-bmc -u root -p $IDRAC_PASSWORD <subcommand>    (Dell iDRAC only)
   exit                           disconnect from the jump host
   \x1b[2mTip: $IPMI_PASSWORD is pre-loaded from the vault; -E uses it so the password never lands in shell history.\x1b[0m`;
 
@@ -170,6 +179,13 @@ const jumpPack: CommandPack = {
       return { out: pingOut(target, r.ip, okk), code: okk ? 0 : 1 };
     },
     ipmitool: oobIpmitool,
+    racadm: (ctx) =>
+      remoteRacadm(ctx, (host) => {
+        const r = resolve(ctx.w, host);
+        if (!r) return null;
+        if (r.plane !== 'bmc') return 'prod';
+        return bmcReachable(ctx.w, r.dev) ? r.dev : 'down';
+      }),
     cmdb,
     curl,
     host: (ctx) => {
@@ -180,7 +196,7 @@ const jumpPack: CommandPack = {
       const r = resolve(ctx.w, ctx.args[0] ?? '');
       return r ? `Server:\t\t10.250.0.53\nAddress:\t10.250.0.53#53\n\nName:\t${ctx.args[0]}\nAddress: ${r.ip}` : { err: `** server can't find ${ctx.args[0]}: NXDOMAIN`, code: 1 };
     },
-    echo: (ctx) => ctx.args.map((a) => (a === '$IPMI_PASSWORD' ? '********' : a)).join(' '),
+    echo: (ctx) => ctx.args.map((a) => (a === '$IPMI_PASSWORD' || a === '$IDRAC_PASSWORD' ? '********' : a)).join(' '),
     clear: () => '\x1b[2J\x1b[H',
     whoami: () => 'dcotech',
     hostname: () => JUMP,
@@ -391,7 +407,7 @@ export function resolverFor(frame: Frame): CommandPack {
     case 'host':
       return linuxPack(frame.deviceId!);
     case 'bmc':
-      return bmcPack;
+      return frame.state?.vendor ? vendorBmcPack(frame.state.vendor as VendorId) : bmcPack;
     case 'switch':
       return switchPack;
     default:

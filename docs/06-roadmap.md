@@ -1,7 +1,8 @@
 # 06 – Roadmap
 
 > **Status (2026-10-09, v0.1):** Phases 0–6 are built and playable. Phase 7 is partly done
-> (sound, Codex, accessibility basics); vendor BMC skins, the AI-cluster pack and PWA/offline are still open.
+> (sound, Codex, accessibility basics). Vendor tracks (Dell, HPE, Supermicro, Lenovo) with BMC skins, CLIs and
+> branded hardware were added 2026-10-18; the AI-cluster pack and PWA/offline are still open.
 > See [08 – Implementation Notes](08-implementation-notes.md).
 
 Phases build on each other. Each phase ends with something playable that can be

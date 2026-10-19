@@ -3,6 +3,8 @@ import { Text } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as THREE from 'three';
+import { drawLogo } from '../../brand';
+import { VSTYLE } from './vendorStyle';
 import { RoundedBoxGeometry } from 'three-stdlib';
 import { MODELS } from '../../../engine/catalog';
 import { parseOutlet, type Led as LedState } from '../../../engine/projectors';
@@ -647,14 +649,19 @@ export function rackFaceTex(rear: boolean, emissive: boolean, variant: number): 
  * you are not working on, so a full row costs one draw call per server instead of hundreds.
  */
 export function serverFaceTex(modelId: string, rear: boolean): THREE.CanvasTexture {
-  return canvasTex(`srvface${modelId}${rear}`, 1024, 200, (g) => {
-    g.scale(2, 2); // drawn in 512×100 units at 2× resolution
+  const hi = !!MODELS[modelId].vendor;
+  return canvasTex(`srvface${modelId}${rear}`, hi ? 2048 : 1024, hi ? 400 : 200, (g) => {
+    g.scale(hi ? 4 : 2, hi ? 4 : 2); // drawn in 512×100 units at 2× (4× for vendor faces)
     const m = MODELS[modelId];
     const S = 116; // px per unit (4.4 wide → 510 px)
     const px = (x: number) => (rear ? 2.2 - x : x + 2.2) * S;
     const py = (y: number) => (0.86 - y) * S;
     g.fillStyle = '#3a414b';
     g.fillRect(0, 0, 512, 100);
+    if (!rear && m.vendor) {
+      drawVendorFace(g, modelId, px, py, S);
+      return;
+    }
     if (!rear) {
       if (modelId === 'hx-2208c') {
         g.fillStyle = '#20252c';
@@ -702,6 +709,61 @@ export function serverFaceTex(modelId: string, rear: boolean): THREE.CanvasTextu
       for (let r = 0; r < 4; r++) for (let c = 0; c < 12; c++) g.fillRect(px(1.05) + c * 9, py(0.8) + r * 9, 5, 5);
     }
   });
+}
+
+/** Baked front of a vendor 2U node: finish, logo plate, carriers, ears and their lit buttons. */
+function drawVendorFace(g: CanvasRenderingContext2D, modelId: string, px: (x: number) => number, py: (y: number) => number, S: number) {
+  const m = MODELS[modelId];
+  const v = m.vendor!;
+  const st = VSTYLE[v];
+  g.fillStyle = st.plate;
+  g.fillRect(0, 0, 512, 100);
+  if (m.form === 'compute') {
+    const x0 = px(0.1);
+    const x1 = px(1.9);
+    g.fillStyle = '#0a0b0d';
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 46; c++) g.fillRect(x0 + 3 + c * 4.5 + (r % 2 ? 2 : 0), py(0.8) + r * 7, 2.4, 2.4);
+    g.fillStyle = st.plate;
+    g.fillRect(x0, py(0.25), x1 - x0, py(0.05) - py(0.25));
+    drawLogo(g, v, x0 + 4, py(0.24), 44, py(0.06) - py(0.24), v === 'dell' ? '#d9dde1' : undefined);
+    g.fillStyle = st.text;
+    g.font = `600 9px "Inter", Arial, sans-serif`;
+    g.textBaseline = 'middle';
+    g.fillText(`${v === 'dell' ? 'PowerEdge ' : v === 'hpe' ? 'ProLiant ' : v === 'lenovo' ? 'ThinkSystem ' : ''}${m.badge ?? ''}`, x0 + 54, py(0.15));
+  }
+  for (const s of m.slots.filter((x) => x.access === 'front')) {
+    const l = m.layout[s.id];
+    const bx = px(l.x - l.w * 0.48);
+    const by = py(l.y + l.h * 0.96);
+    const w = l.w * 0.96 * S;
+    const h = l.h * 0.92 * S;
+    g.fillStyle = st.carrier;
+    g.fillRect(bx, by, w, h);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    if (s.kind === 'hdd') for (let i = 0; i < 6; i++) g.fillRect(bx + 3 + i * 4, by + h * 0.25, 2, h * 0.5);
+    g.fillStyle = st.handle;
+    if (s.kind === 'hdd') g.fillRect(bx + w * 0.6, by + h * 0.18, w * 0.34, h * 0.64);
+    else g.fillRect(bx + w * 0.12, by + h * 0.7, w * 0.76, h * 0.22);
+    g.fillStyle = st.release;
+    if (s.kind === 'hdd') g.fillRect(bx + w * 0.52, by + h * 0.4, 3, h * 0.2);
+    else g.fillRect(bx + w * 0.35, by + h * 0.6, w * 0.3, 2);
+    g.fillStyle = '#2bff6a';
+    g.fillRect(s.kind === 'hdd' ? bx + 2 : bx + w / 2 - 1, s.kind === 'hdd' ? by + h / 2 - 1 : by + 2, 2, 2);
+  }
+  // rack ears
+  g.fillStyle = st.ear;
+  g.fillRect(0, 0, 14, 100);
+  g.fillRect(498, 0, 14, 100);
+  g.fillStyle = '#f4f4f2';
+  g.fillRect(2, 30, 10, 30); // colo asset-tag sticker
+  g.fillStyle = '#2bff6a';
+  g.beginPath();
+  g.arc(505, v === 'dell' ? 18 : 13, 3.2, 0, Math.PI * 2); // power button ring
+  g.fill();
+  g.fillStyle = v === 'dell' ? '#3d8bff' : '#1a1d22';
+  g.beginPath();
+  g.arc(7, 75, 2.6, 0, Math.PI * 2); // Dell's system health / ID button glows blue
+  g.fill();
 }
 
 /** Rear face of a 1U switch: two rows of ports + uplinks. */

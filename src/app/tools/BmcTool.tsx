@@ -3,12 +3,34 @@ import { KIND_LABEL, MODELS, partSpec } from '../../engine/catalog';
 import { goodPsuCount, hasAC, healthRollup, linkState, sensors, slotLed } from '../../engine/projectors';
 import { bmcReachable } from '../../engine/shells/net';
 import type { Device } from '../../engine/types';
+import { vendorEvent } from '../../engine/vendorlog';
+import { VENDORS, type VendorId } from '../../engine/vendors';
+import { expressServiceCode } from '../../engine/shells/vendorcli';
+import { VendorLogo } from '../brand';
 import { fmtSimClock } from '../format';
 import { useStore } from '../store';
 
 type Tab = 'dash' | 'sel' | 'sensors' | 'inv' | 'storage' | 'power' | 'console';
 
 const SEV_ICON = { ok: '●', warning: '▲', critical: '✖', unknown: '?' };
+
+const TAB_LABELS: Record<'generic' | VendorId, Record<Tab, string>> = {
+  generic: { dash: 'Dashboard', sel: 'Event Log', sensors: 'Sensors', inv: 'Inventory', storage: 'Storage', power: 'Power & Control', console: 'Console' },
+  dell: { dash: 'Dashboard', sel: 'Lifecycle Log', sensors: 'System', inv: 'Hardware Inventory', storage: 'Storage', power: 'Power Control', console: 'Virtual Console' },
+  hpe: { dash: 'Overview', sel: 'Integrated Management Log', sensors: 'System Information', inv: 'Device Inventory', storage: 'Storage', power: 'Power & Thermal', console: 'Remote Console' },
+  lenovo: { dash: 'Home', sel: 'Events', sensors: 'Utilization', inv: 'Inventory', storage: 'Storage', power: 'Power Actions', console: 'Remote Console' },
+  supermicro: { dash: 'Dashboard', sel: 'Health Event Log', sensors: 'Sensor Readings', inv: 'Component Info', storage: 'Storage Monitoring', power: 'Power Control', console: 'Remote Control' },
+};
+
+/** How each vendor's web UI reaches the serial console from the jump host. */
+const SOL_HOWTO: Record<VendorId, (h: string) => string[]> = {
+  dell: (h) => [`ssh root@${h}-bmc`, 'console com2'],
+  hpe: (h) => [`ssh Administrator@${h}-bmc`, 'vsp'],
+  lenovo: (h) => [`ssh USERID@${h}-bmc`, 'console 1'],
+  supermicro: (h) => [`ipmitool -I lanplus -H ${h}-bmc -U ADMIN -E sol activate`],
+};
+
+const selTime = (t: number) => (t < 0 ? `-${Math.round(-t / 3600)}h` : fmtSimClock(t));
 
 export function BmcTool() {
   const devices = useStore((s) => s.world!.devices);
@@ -19,8 +41,9 @@ export function BmcTool() {
   const [tab, setTab] = useState<Tab>('dash');
   const dev = devices[target];
   const matches = query ? servers.filter((d) => d.hostname.includes(query.toLowerCase()) || d.bmc.ip.includes(query)) : [];
+  const vend = dev ? MODELS[dev.model].vendor : undefined;
   return (
-    <div className="bmc">
+    <div className={`bmc ${vend ? `vendor vendor-${vend}` : ''}`} style={vend ? ({ ['--vbg' as string]: VENDORS[vend].bmcBg, ['--vac' as string]: VENDORS[vend].bmcAccent } as React.CSSProperties) : undefined}>
       <div className="row" style={{ marginBottom: 10, position: 'relative' }}>
         <span className="muted">https://</span>
         <input className="grow mono" placeholder="Type a hostname or BMC IP…" value={query || (dev ? `${dev.hostname}-bmc` : '')} onFocus={() => setQuery('')} onChange={(e) => setQuery(e.target.value)} />
@@ -84,12 +107,29 @@ function BmcConsole({ dev, tab, setTab }: { dev: Device; tab: Tab; setTab: (t: T
     );
   const h = healthRollup(w, dev);
   const m = MODELS[dev.model];
+  const v = m.vendor;
+  const labels = TAB_LABELS[v ?? 'generic'];
   return (
     <>
+      {v && (
+        <div className="vbar">
+          <VendorLogo vendor={v} width={86} height={26} mono={v === 'hpe' ? undefined : '#ffffff'} />
+          <div className="vbar-title">
+            <b>{VENDORS[v].bmc.short}</b>
+            <span>{VENDORS[v].bmc.product}</span>
+          </div>
+          <div className="spacer" />
+          <span className={`vbar-health sev-${h.overall}`}>
+            {SEV_ICON[h.overall]} {h.overall === 'ok' ? 'Healthy' : h.overall === 'warning' ? 'Warning' : 'Critical'}
+          </span>
+        </div>
+      )}
       <div className="row wrap" style={{ marginBottom: 6 }}>
         <b style={{ fontSize: 15 }}>{dev.hostname}</b>
         <span className="tag">{m.name}</span>
-        <span className="tag mono">S/N {dev.serial}</span>
+        <span className="tag mono">
+          {v ? VENDORS[v].serialLabel : 'S/N'} {dev.serial}
+        </span>
         <span className={`sev-${h.overall}`}>
           {SEV_ICON[h.overall]} {h.overall.toUpperCase()}
         </span>
@@ -99,13 +139,13 @@ function BmcConsole({ dev, tab, setTab }: { dev: Device; tab: Tab; setTab: (t: T
       <div className="bmc-tabs">
         {(
           [
-            ['dash', 'Dashboard'],
-            ['sel', 'Event Log'],
-            ['sensors', 'Sensors'],
-            ['inv', 'Inventory'],
-            ['storage', 'Storage'],
-            ['power', 'Power & Control'],
-            ['console', 'Console'],
+            ['dash', labels.dash],
+            ['sel', labels.sel],
+            ['sensors', labels.sensors],
+            ['inv', labels.inv],
+            ['storage', labels.storage],
+            ['power', labels.power],
+            ['console', labels.console],
           ] as Array<[Tab, string]>
         ).map(([k, l]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>
@@ -132,6 +172,24 @@ function BmcConsole({ dev, tab, setTab }: { dev: Device; tab: Tab; setTab: (t: T
             <span>{dev.power === 'on' ? (dev.os === 'up' ? 'Running' : dev.os) : '—'}</span>
             <span>Asset tag</span>
             <span className="mono">{dev.assetTag}</span>
+            {v && (
+              <>
+                <span>{VENDORS[v].serialLabel}</span>
+                <span className="mono">{dev.serial}</span>
+                {v === 'dell' && (
+                  <>
+                    <span>Express Service Code</span>
+                    <span className="mono">{expressServiceCode(dev.serial)}</span>
+                  </>
+                )}
+                <span>{VENDORS[v].bmc.short} firmware</span>
+                <span className="mono">{dev.bmc.fw}</span>
+                <span>{VENDORS[v].bmc.short} MAC / IP</span>
+                <span className="mono">
+                  {dev.bmc.mac} / {dev.bmc.ip}
+                </span>
+              </>
+            )}
             <span>PSU redundancy</span>
             <span className={goodPsuCount(w, dev) >= 2 ? 'sev-ok' : 'sev-critical'}>{goodPsuCount(w, dev) >= 2 ? 'Fully redundant' : 'LOST'}</span>
             <span>Boot order</span>
@@ -144,7 +202,8 @@ function BmcConsole({ dev, tab, setTab }: { dev: Device; tab: Tab; setTab: (t: T
           </p>
         </>
       )}
-      {tab === 'sel' && (
+      {tab === 'sel' && v && <VendorLog dev={dev} v={v} />}
+      {tab === 'sel' && !v && (
         <>
           <div className="row" style={{ marginBottom: 8 }}>
             <span className="muted">{dev.sel.length} entries</span>
@@ -290,8 +349,8 @@ function BmcConsole({ dev, tab, setTab }: { dev: Device; tab: Tab; setTab: (t: T
       {tab === 'console' && (
         <div className="col">
           <p>The HTML5 virtual console is disabled on this fleet. Use Serial-over-LAN from the jump host:</p>
-          <code className="card mono" style={{ display: 'block', background: '#05080c' }}>
-            ipmitool -I lanplus -H {dev.hostname}-bmc -U admin -E sol activate
+          <code className="card mono" style={{ display: 'block', background: '#05080c', whiteSpace: 'pre' }}>
+            {v ? SOL_HOWTO[v](dev.hostname).join('\n') : `ipmitool -I lanplus -H ${dev.hostname}-bmc -U admin -E sol activate`}
           </code>
           <p className="muted" style={{ fontSize: 12 }}>
             Exit SOL with <b>~~.</b> (two tildes). A single "~." is caught by your ssh session to the jump host and disconnects you.
@@ -347,5 +406,89 @@ function Inventory({ dev }: { dev: Device }) {
         })}
       </tbody>
     </table>
+  );
+}
+
+/** The management log in the vendor's own layout: Dell Lifecycle Log, HPE IML, Lenovo events, Supermicro health log. */
+function VendorLog({ dev, v }: { dev: Device; v: VendorId }) {
+  const dispatch = useStore((s) => s.dispatch);
+  const rows = [...dev.sel].reverse().map((e) => ({ e, ev: vendorEvent(dev, e) }));
+  const sev = (s: string) => (s === 'critical' ? 'sev-critical' : s === 'warning' ? 'sev-warning' : 'sev-ok');
+  const word: Record<VendorId, Record<string, string>> = {
+    dell: { critical: 'Critical', warning: 'Warning', info: 'Ok' },
+    hpe: { critical: 'Critical', warning: 'Caution', info: 'Informational' },
+    lenovo: { critical: 'Error', warning: 'Warning', info: 'Informational' },
+    supermicro: { critical: 'Critical', warning: 'Warning', info: 'Info' },
+  };
+  const head: Record<VendorId, string[]> = {
+    dell: ['Severity', 'Date and Time', 'Message ID', 'Description'],
+    hpe: ['Severity', 'Class', 'Last Update', 'Count', 'Description'],
+    lenovo: ['Type', 'Source', 'Event ID', 'Message', 'Date'],
+    supermicro: ['ID', 'Time', 'Sensor', 'Description'],
+  };
+  return (
+    <>
+      <div className="row" style={{ marginBottom: 8 }}>
+        <span className="muted">
+          {VENDORS[v].bmc.logName}: {dev.sel.length} entries
+        </span>
+        <div className="spacer" />
+        <button className="btn sm" onClick={() => dispatch({ type: 'setFlag', name: `sel_viewed:${dev.id}` })}>
+          💾 Export
+        </button>
+        <button className="btn sm danger" onClick={() => dispatch({ type: 'selClear', deviceId: dev.id })}>
+          {v === 'hpe' ? 'Clear IML' : 'Clear Log'}
+        </button>
+      </div>
+      <table className="t vlog">
+        <thead>
+          <tr>
+            {head[v].map((h) => (
+              <th key={h}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ e, ev }) => (
+            <tr key={e.id}>
+              {v === 'dell' && (
+                <>
+                  <td className={sev(e.severity)}>{word.dell[e.severity]}</td>
+                  <td className="mono nowrap">{selTime(e.t)}</td>
+                  <td className="mono">{ev.code}</td>
+                  <td>{ev.text}</td>
+                </>
+              )}
+              {v === 'hpe' && (
+                <>
+                  <td className={sev(e.severity)}>{word.hpe[e.severity]}</td>
+                  <td>{ev.category}</td>
+                  <td className="mono nowrap">{selTime(e.t)}</td>
+                  <td className="mono">1</td>
+                  <td>{ev.text}</td>
+                </>
+              )}
+              {v === 'lenovo' && (
+                <>
+                  <td className={sev(e.severity)}>{word.lenovo[e.severity]}</td>
+                  <td>{ev.category}</td>
+                  <td className="mono">{ev.code}</td>
+                  <td>{ev.text}</td>
+                  <td className="mono nowrap">{selTime(e.t)}</td>
+                </>
+              )}
+              {v === 'supermicro' && (
+                <>
+                  <td className="dim">{e.id}</td>
+                  <td className="mono nowrap">{selTime(e.t)}</td>
+                  <td>{ev.category}</td>
+                  <td className={sev(e.severity)}>{ev.text}</td>
+                </>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 }

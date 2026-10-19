@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { MODULES, SCENARIOS, scenarioById, scenariosFor } from '../../content';
+import { VENDOR_IDS, VENDORS } from '../../engine/vendors';
+import { VendorLogo } from '../brand';
 import { TopNav } from '../App';
 import { badgesOf, rankOf, starsFor, streakDays } from '../progress';
 import { useStore } from '../store';
@@ -19,13 +21,6 @@ function HeroRack() {
   );
 }
 
-function dailyPick(): { id: string; seed: number } {
-  const d = new Date();
-  const seed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-  const pool = SCENARIOS.filter((s) => s.module !== 'shift');
-  return { id: pool[seed % pool.length].id, seed };
-}
-
 export function MainMenu() {
   const go = useStore((s) => s.go);
   const start = useStore((s) => s.start);
@@ -35,16 +30,6 @@ export function MainMenu() {
   const stars = SCENARIOS.reduce((a, s) => a + starsFor(prog.scenarios[s.id]), 0);
   const golds = SCENARIOS.filter((s) => prog.scenarios[s.id]?.bestRating === 'Gold').length;
   const badges = useMemo(() => badgesOf(prog, { moduleOf: (id) => scenarioById(id)?.module, hardwareIds: scenariosFor('hardware').map((s) => s.id) }), [prog]);
-  // Next mission: the easiest scenario you haven't passed yet, in module order.
-  const next = useMemo(() => {
-    for (const m of MODULES) {
-      const s = [...scenariosFor(m.id)].sort((a, b) => a.difficulty - b.difficulty).find((x) => !prog.scenarios[x.id]?.completed);
-      if (s) return s;
-    }
-    return null;
-  }, [prog]);
-  const daily = dailyPick();
-  const dailyDef = scenarioById(daily.id)!;
   const pctToNext = Math.round(((rank.xp - rank.floor) / (rank.next - rank.floor)) * 100);
   const newPlayer = prog.history.length === 0;
   return (
@@ -63,18 +48,29 @@ export function MainMenu() {
                 <button className="btn primary xl" onClick={() => start('hw-psu', 'learn', 1001)}>
                   ▶ Start here: guided PSU swap
                 </button>
-              ) : next ? (
-                <button className="btn primary xl" onClick={() => start(next.id, prog.scenarios[next.id] ? 'practice' : 'learn')}>
-                  Next mission: {next.title}
-                </button>
               ) : (
-                <button className="btn primary xl" onClick={() => go({ name: 'progress' })}>
-                  🏆 Everything passed: go for Gold
+                <button className="btn primary xl" onClick={() => document.getElementById('zones')?.scrollIntoView({ behavior: 'smooth' })}>
+                  Browse training zones ↓
                 </button>
               )}
-              <button className="btn xl daily" onClick={() => start(daily.id, 'challenge', daily.seed)} title={dailyDef.summary}>
-                Daily drill <small>{dailyDef.title}</small>
-              </button>
+            </div>
+            <div className="vendor-pick">
+              <span className="vp-or">or select a specific vendor</span>
+              <div className="vendor-btns">
+                {VENDOR_IDS.map((v) => {
+                  const list = scenariosFor(v);
+                  const passed = list.filter((s) => prog.scenarios[s.id]?.completed).length;
+                  return (
+                    <button key={v} className={`vendor-btn v-${v}`} style={{ ['--vc' as string]: VENDORS[v].color }} onClick={() => go({ name: 'module', module: v })} title={MODULES.find((m) => m.id === v)?.blurb}>
+                      <VendorLogo vendor={v} width={118} height={30} />
+                      <span className="vb-fam">{VENDORS[v].family}</span>
+                      <span className="vb-prog">
+                        {passed}/{list.length} drills
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
           <div className="player-card">
@@ -151,12 +147,12 @@ export function MainMenu() {
           </div>
         </section>
 
-        <div className="section-head">
+        <div className="section-head" id="zones">
           <h2>Pick your training zone</h2>
           <span className="muted">Each zone has Learn (coached), Practice (hints on request) and Challenge (timed) runs. Earn up to ⭐⭐⭐ per scenario.</span>
         </div>
         <div className="zones">
-          {MODULES.map((m, i) => {
+          {MODULES.filter((m) => !m.vendor).map((m, i) => {
             const list = scenariosFor(m.id);
             const passed = list.filter((s) => prog.scenarios[s.id]?.completed).length;
             const st = list.reduce((a, s) => a + starsFor(prog.scenarios[s.id]), 0);
@@ -197,7 +193,7 @@ export function MainMenu() {
           ))}
         </div>
         <p className="dim" style={{ marginTop: 28, fontSize: 12 }}>
-          Generic, vendor-neutral hardware inspired by OCP/hyperscale designs. Progress is saved in this browser only.
+          Training zones use generic OCP/hyperscale-style hardware; the vendor tracks model Dell, HPE, Supermicro and Lenovo gear. DCT Training is an independent learning project, not affiliated with or endorsed by any of these companies. Product names and logos belong to their owners. Progress is saved in this browser only.
         </p>
       </div>
     </>

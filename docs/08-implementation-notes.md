@@ -104,7 +104,23 @@ export const myScenarios: ScenarioDef[] = [{
 
 ## Known limitations / next steps
 
-* Vendor-specific BMC skins (iDRAC/iLO-style) are not built yet (planned per doc 07).
+* Vendor tracks (2026-10-18): Dell PowerEdge R760, HPE ProLiant DL380 Gen11, Supermicro SYS-221H/621C and Lenovo
+  ThinkSystem SR650 V3, each in an 8x NVMe compute and a 12x LFF storage flavour. See "Vendor tracks" below.
+
+## Vendor tracks
+
+| Piece | Where |
+|---|---|
+| Registry: names, part numbers per generic PN, slot labels, serial / Service Tag formats, BMC product, dispatch text | `src/engine/vendors.ts` |
+| Vendor parts and models are generated from the generic ones (same slot ids, so faults and grading are unchanged) | `src/engine/catalog.ts` |
+| SEL → Dell Lifecycle Log IDs, HPE IML, Lenovo FQXSP events, Supermicro health log | `src/engine/vendorlog.ts` |
+| SSH shells: iDRAC `racadm`, iLO SMASH CLP, XCC CLI, Supermicro SMASH-CLP; `racadm -r` on the jump host | `src/engine/shells/vendorcli.ts` |
+| BMC web UI skin and log tables | `src/app/tools/BmcTool.tsx` |
+| Logos (canvas recreations), vendor front panels, baked faces | `src/app/brand.tsx`, `src/app/scenes/three/VendorFront.tsx`, `common.tsx` |
+| Scenarios: every hardware drill per vendor | `src/content/vendors.ts` (via `drillScenario` in `hardware.ts`) |
+
+Part numbers, message IDs and labels follow each vendor's real style closely but are illustrative. DCT Training is
+not affiliated with or endorsed by any vendor; the menu footer says so.
 * The AI/GPU cluster pack (liquid cooling, InfiniBand) from Phase 7 is not started.
 * The motherboard swap (moving every component) is not a drill yet.
 * No accounts or cloud saves; progress lives in localStorage (export it as JSON from Settings).

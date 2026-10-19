@@ -1,6 +1,7 @@
 // Hardware catalog: server/switch models, slot layouts and part numbers.
-// Generic, OCP/hyperscale-inspired hardware. No vendor trademarks.
+// Generic, OCP/hyperscale-inspired nodes, plus Dell/HPE/Supermicro/Lenovo versions generated from vendors.ts.
 import type { ComponentKind, SlotDef } from './types';
+import { VENDOR_IDS, VENDORS, type VendorId } from './vendors';
 
 export interface PartSpec {
   pn: string;
@@ -11,6 +12,8 @@ export interface PartSpec {
   gotcha?: string;
   dataBearing?: boolean;
   watts?: number;
+  /** Set on vendor-branded parts; generic parts have none. */
+  vendor?: VendorId;
 }
 
 export const PARTS: Record<string, PartSpec> = {
@@ -151,6 +154,11 @@ export interface ServerModel {
   defaultParts: Partial<Record<ComponentKind, string>>;
   ports: string[];
   description: string;
+  vendor?: VendorId;
+  /** Chassis flavour: 8x 2.5" NVMe compute or 12x 3.5" storage. */
+  form?: 'compute' | 'storage';
+  /** Model badge printed on the chassis. */
+  badge?: string;
 }
 
 function dimmSlots(): { slots: SlotDef[]; layout: Record<string, SlotLayout> } {
@@ -259,6 +267,7 @@ function computeModel(): ServerModel {
       cmos: 'BATT-CR2032',
     },
     ports: ['nic0p0', 'nic0p1', 'bmc'],
+    form: 'compute',
     description: '2-socket compute node with 16 DDR5 DIMMs, 8 front U.2 NVMe bays, a mirrored M.2 boot pair, an OCP 3.0 25G NIC and a low-profile GPU on Riser 1.',
   };
 }
@@ -305,6 +314,7 @@ function storageModel(): ServerModel {
       cmos: 'BATT-CR2032',
     },
     ports: ['nic0p0', 'nic0p1', 'bmc'],
+    form: 'storage',
     description: '2-socket JBOD storage node with 12 front 3.5" SATA HDDs on an AHCI/HBA controller. Data is replicated by the storage service, so there is no hardware RAID.',
   };
 }
@@ -344,6 +354,53 @@ export const MODELS: Record<string, ServerModel> = {
   },
 };
 
+// ---------- vendor parts and models ----------
+
+/** Vendor PN for a generic PN. */
+export function vendorPn(vendor: VendorId, genericPn: string): string {
+  return VENDORS[vendor].parts[genericPn].pn;
+}
+
+for (const v of VENDOR_IDS) {
+  for (const [gpn, vp] of Object.entries(VENDORS[v].parts)) {
+    const g = PARTS[gpn];
+    const gotcha = vp.gotcha === undefined ? g.gotcha : vp.gotcha || undefined;
+    PARTS[vp.pn] = { ...g, pn: vp.pn, desc: vp.desc, vendor: v, watts: vp.watts ?? g.watts, formFactor: vp.formFactor ?? g.formFactor, gotcha };
+  }
+  const info = VENDORS[v];
+  for (const form of ['compute', 'storage'] as const) {
+    const base = form === 'compute' ? computeModel() : storageModel();
+    const mi = info.models[form];
+    const defaults: Partial<Record<ComponentKind, string>> = {};
+    for (const [k, gpn] of Object.entries(base.defaultParts) as Array<[ComponentKind, string]>) defaults[k] = vendorPn(v, k === 'm2' && info.m2FormFactor === 'm2-2280' ? 'M2-960G-NVME-2280' : gpn);
+    MODELS[mi.id] = {
+      ...base,
+      id: mi.id,
+      name: mi.name,
+      badge: mi.badge,
+      description: mi.description,
+      vendor: v,
+      slots: base.slots.map((sl) => ({ ...sl, label: info.slotLabel(sl.id) ?? sl.label })),
+      slotFormFactor: { ...base.slotFormFactor, m2: info.m2FormFactor },
+      defaultParts: defaults,
+    };
+  }
+}
+
+export function vendorOf(modelId: string): VendorId | undefined {
+  return MODELS[modelId]?.vendor;
+}
+
+/** Slot name for step/coach text: the vendor's label on vendor hardware, the slot id on generic nodes. */
+export function displaySlot(modelId: string, slotId: string): string {
+  return MODELS[modelId]?.vendor ? slotLabel(modelId, slotId) : slotId;
+}
+
+/** Label for a slot as the vendor prints it (falls back to the slot id). */
+export function slotLabel(modelId: string, slotId: string): string {
+  return MODELS[modelId]?.slots.find((s) => s.id === slotId)?.label ?? slotId;
+}
+
 export function partSpec(pn: string): PartSpec {
   const p = PARTS[pn];
   if (!p) throw new Error(`Unknown part ${pn}`);
@@ -354,11 +411,11 @@ export function slotDef(modelId: string, slotId: string): SlotDef | undefined {
   return MODELS[modelId].slots.find((s) => s.id === slotId);
 }
 
-/** Decoy part numbers for a given correct PN (same kind, same form factor or a near miss). */
+/** Decoy part numbers for a given correct PN (same kind and vendor, same form factor or a near miss). */
 export function decoysFor(pn: string): string[] {
   const spec = partSpec(pn);
   return Object.values(PARTS)
-    .filter((p) => p.kind === spec.kind && p.pn !== pn && p.gotcha)
+    .filter((p) => p.kind === spec.kind && p.pn !== pn && p.gotcha && p.vendor === spec.vendor)
     .map((p) => p.pn);
 }
 

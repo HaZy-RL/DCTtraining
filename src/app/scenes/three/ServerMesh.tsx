@@ -7,6 +7,7 @@ import { isTight } from '../../../engine/fasteners';
 import { cpuTemp, hasAC, healthLed, powerLed, slotLed } from '../../../engine/projectors';
 import type { Component, Device, Rack } from '../../../engine/types';
 import { useStore } from '../../store';
+import { VendorEars, VendorPlate, VSTYLE, vMat } from './VendorFront';
 import { bevelBox, driveLabelTex, serverFaceTex, barcodeTex, carrierTex, CHASSIS_D, deviceOrigin, dimmTex, grilleTex, GuideGlow, hoverCursor, ihsTex, Label, Led, lidTex, MAT, pcbTex, portLocal, SlideAnim } from './common';
 
 export interface ServerMeshProps {
@@ -599,6 +600,10 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
   const m = MODELS[dev.model];
   const bays = m.slots.filter((s) => s.access === 'front');
   const g = (key: string) => guide === key;
+  const v = m.vendor;
+  const vs = v ? VSTYLE[v] : null;
+  const handleMat = vs ? vMat(vs.handle, 0.3, 0.55) : MAT.orangeTouch;
+  const releaseMat = vs ? vMat(vs.release, 0.1, 0.55) : MAT.orangeTouch;
   return (
     <group>
       {bays.map((s) => {
@@ -623,17 +628,17 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
                   {/* carrier faceplate */}
                   <mesh position={[l.x, l.y + l.h / 2, zFront - 0.02]}>
                     <boxGeometry args={[l.w * 0.96, l.h * 0.92, 0.06]} />
-                    <meshStandardMaterial color="#3d444e" map={lod === 'full' ? carrierTex(isHdd ? 'hdd' : 'nvme') : null} emissive={selSlot === s.id ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.5} roughness={0.5} />
+                    <meshStandardMaterial color={vs ? vs.carrier : '#3d444e'} map={lod === 'full' ? carrierTex(isHdd ? 'hdd' : 'nvme') : null} emissive={selSlot === s.id ? '#1d6f8f' : '#000'} emissiveIntensity={0.7} metalness={0.5} roughness={0.5} />
                   </mesh>
                   {/* hinged handle (orange = hot-swap) */}
                   <group position={isHdd ? [l.x + l.w * 0.46, l.y + l.h / 2, zFront + 0.02] : [l.x, l.y + l.h * 0.05, zFront + 0.02]} rotation={isHdd ? [0, open ? -0.9 : 0, 0] : [open ? 0.9 : 0, 0, 0]}>
-                    <mesh position={isHdd ? [-l.w * 0.17, 0, 0.02] : [0, l.h * 0.13, 0.02]} material={MAT.orangeTouch}>
+                    <mesh position={isHdd ? [-l.w * 0.17, 0, 0.02] : [0, l.h * 0.13, 0.02]} material={handleMat}>
                       <boxGeometry args={isHdd ? [l.w * 0.34, l.h * 0.62, 0.035] : [l.w * 0.72, l.h * 0.26, 0.035]} />
                     </mesh>
                   </group>
                   {lod === 'full' && (
-                    <mesh position={isHdd ? [l.x + l.w * 0.04, l.y + l.h / 2, zFront + 0.015] : [l.x, l.y + l.h * 0.36, zFront + 0.015]} rotation={[Math.PI / 2, 0, 0]} material={MAT.orangeTouch}>
-                      <cylinderGeometry args={[0.022, 0.022, 0.025, 12]} />
+                    <mesh position={isHdd ? [l.x + l.w * 0.04, l.y + l.h / 2, zFront + 0.015] : [l.x, l.y + l.h * 0.36, zFront + 0.015]} rotation={[Math.PI / 2, 0, 0]} material={releaseMat}>
+                      <cylinderGeometry args={[0.022, 0.022, 0.025, 24]} />
                     </mesh>
                   )}
                 </group>
@@ -645,7 +650,8 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
         );
       })}
       {/* compute nodes: perforated intake bezel + model badge beside the 8 NVMe bays */}
-      {m.id === 'hx-2208c' && (
+      {m.form === 'compute' && v && <VendorPlate v={v} modelId={m.id} />}
+      {m.form === 'compute' && !v && (
         <group>
           <mesh position={[1.0, 0.43, FZ + 0.012]} raycast={() => null}>
             <planeGeometry args={[1.8, 0.76]} />
@@ -654,7 +660,9 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
           {lod === 'full' && <Label text="HX-2208C" position={[1.0, 0.78, FZ + 0.016]} size={[0.5, 0.07]} opts={{ bg: '#30363e', fg: '#c9d0d6', w: 200, h: 28 }} />}
         </group>
       )}
-      {/* control panel ear */}
+      {v && <VendorEars dev={dev} w={w} v={v} ac={ac} onDevice={onDevice} glowPower={g('power')} />}
+      {/* control panel ear (generic nodes) */}
+      {!v && (
       <group onClick={handler(onDevice)}>
         <mesh position={[2.1, 0.43, FZ + 0.03]} material={MAT.bezel}>
           <boxGeometry args={[0.26, 0.84, 0.06]} />
@@ -669,15 +677,18 @@ function FrontPanel({ dev, ac, lod, guide, onSlot, onDevice, onFastener, selSlot
         </mesh>
         {g('power') && <GuideGlow position={[2.1, 0.18, FZ + 0.07]} size={[0.14, 0.14, 0.06]} />}
       </group>
+      )}
       {/* left ear with labels + pull-out asset tag */}
-      <mesh position={[-2.12, 0.43, FZ + 0.03]} material={MAT.bezel}>
-        <boxGeometry args={[0.22, 0.84, 0.06]} />
-      </mesh>
+      {!v && (
+        <mesh position={[-2.12, 0.43, FZ + 0.03]} material={MAT.bezel}>
+          <boxGeometry args={[0.22, 0.84, 0.06]} />
+        </mesh>
+      )}
       {lod === 'full' && (
         <>
           <AssetTag dev={dev} glow={g('assettag')} />
           <Label text={dev.hostname.split('-').slice(-1)[0]} position={[-2.12, 0.12, FZ + 0.065]} size={[0.2, 0.07]} opts={{ w: 160, h: 56, bg: '#ffffff' }} />
-          {[0.06, 0.8].map((y) => (
+          {!v && [0.06, 0.8].map((y) => (
             <mesh key={y} position={[-2.12, y, FZ + 0.065]} rotation={[Math.PI / 2, 0, 0]} material={MAT.silver} raycast={() => null}>
               <cylinderGeometry args={[0.022, 0.022, 0.02, 10]} />
             </mesh>

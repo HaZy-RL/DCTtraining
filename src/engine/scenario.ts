@@ -13,7 +13,12 @@ export type ModuleId =
   | 'ticketing'
   | 'safety'
   | 'floor'
-  | 'shift';
+  | 'shift'
+  // vendor tracks
+  | 'dell'
+  | 'hpe'
+  | 'supermicro'
+  | 'lenovo';
 
 export type ToolId = 'ticket' | 'terminal' | 'bmc' | 'assets' | 'parts' | 'notes' | 'floor' | 'cutsheet' | 'pdu';
 export type SceneId = 'rack' | 'floor' | 'rackbuild' | 'rj45' | 'fiber' | 'hazard' | 'triage' | 'quiz' | 'none';

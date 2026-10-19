@@ -286,3 +286,6 @@ export function useWorld<T>(sel: (w: World) => T): T {
 
 // Exposed for debugging and the E2E smoke tests (scripts/*.mjs).
 (window as unknown as { __DCT__?: typeof useStore }).__DCT__ = useStore;
+
+// Screenshot/QA hook: ?debug exposes the store so scripts can frame a specific device.
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug')) (window as unknown as { __dct: typeof useStore }).__dct = useStore;

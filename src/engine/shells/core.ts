@@ -20,6 +20,8 @@ export interface Frame {
   raw?: boolean;
   /** Frame-local state (BIOS cursor, SOL scrollback position…) */
   state?: Record<string, unknown>;
+  /** Fixed prompt (vendor BMC shells: "racadm>> ", "</>hpiLO-> "…). */
+  prompt?: string;
 }
 
 export interface CmdCtx {
@@ -252,6 +254,7 @@ export class ShellSession {
   prompt(): string {
     const f = this.frame;
     if (f.raw) return '';
+    if (f.prompt) return `\x1b[33m${f.prompt}\x1b[0m`;
     if (f.kind === 'bmc') return `\x1b[33m${f.user}@${f.hostLabel}\x1b[0m:${f.cwd}> `;
     if (f.kind === 'switch') return `\x1b[36m${f.hostLabel}\x1b[0m# `;
     const color = f.kind === 'host' ? '32' : f.kind === 'jump' ? '35' : '34';

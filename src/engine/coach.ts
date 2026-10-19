@@ -1,6 +1,6 @@
 // The coach: breaks a repair objective into the physical micro-actions a new DCT actually
 // performs (walk here, flip this clip, back out that screw…), each checked against the live world.
-import { fastenersOf, KIND_LABEL, MODELS } from './catalog';
+import { displaySlot, fastenersOf, KIND_LABEL, MODELS } from './catalog';
 import { heatsinkTorqued, isTight } from './fasteners';
 import { parseOutlet } from './projectors';
 import type { CoachLine, CoachTarget } from './scenario';
@@ -74,6 +74,7 @@ export function removalPlan(w: World, id: string, slot: string): CoachLine[] {
   const d = dev(w, id);
   const def = MODELS[d.model].slots.find((s) => s.id === slot)!;
   const removed = !!w.flags[`removed:${id}:${slot}`];
+  const ds = displaySlot(d.model, slot);
   const t = (sel: string): CoachTarget => ({ deviceId: id, rackId: d.rackId ?? undefined, side: def.access === 'rear' ? 'rear' : 'front', sel });
   const lines: CoachLine[] = [...approach(w, id, def.access === 'rear' ? 'rear' : 'front')];
   if (def.access === 'internal') {
@@ -89,8 +90,8 @@ export function removalPlan(w: World, id: string, slot: string): CoachLine[] {
   if (def.kind === 'psu') {
     const corded = !!d.powerCords[slot];
     lines.push(
-      L(`Flip the cord retention bail off the ${slot} plug`, removed || !corded || !isTight(d, slot, 'bail'), t(`fastener:${slot}:bail`)),
-      L(`Unplug the power cord from ${slot}`, removed || !corded, t(`cord:${slot}`)),
+      L(`Flip the cord retention bail off the ${ds} plug`, removed || !corded || !isTight(d, slot, 'bail'), t(`fastener:${slot}:bail`)),
+      L(`Unplug the power cord from ${ds}`, removed || !corded, t(`cord:${slot}`)),
     );
   }
   if (def.kind === 'dimm') {
@@ -106,7 +107,7 @@ export function removalPlan(w: World, id: string, slot: string): CoachLine[] {
     if (f.gatesRemoval === false) continue;
     lines.push(L(`${f.release}${f.tool ? ` (${f.tool})` : ''}`, removed || !isTight(d, slot, f.id), t(`fastener:${slot}:${f.id}`)));
   }
-  lines.push(L(`Pull the ${KIND_LABEL[def.kind].toLowerCase()} out of ${slot}`, removed, t(slot)));
+  lines.push(L(`Pull the ${KIND_LABEL[def.kind].toLowerCase()} out of ${ds}`, removed, t(slot)));
   if (removed) return lines.map((l) => ({ ...l, done: true }));
   return lines;
 }
@@ -147,7 +148,7 @@ export function reassemblyPlan(w: World, id: string, slot: string): CoachLine[] 
   const lines: CoachLine[] = [];
   const req = def.requires ?? [];
   if (req.includes('heatsink')) {
-    lines.push(L(`Seat the heatsink on ${slot} (fresh thermal paste)`, d.heatsinks[slot], t(`heatsink:${slot}`)));
+    lines.push(L(`Seat the heatsink on ${displaySlot(d.model, slot)} (fresh thermal paste)`, d.heatsinks[slot], t(`heatsink:${slot}`)));
     for (const n of [1, 2, 3, 4]) lines.push(L(`Torque heatsink screw ${n} (order 1 → 2 → 3 → 4)`, d.heatsinks[slot] && isTight(d, `heatsink:${slot}`, `s${n}`), t(`fastener:heatsink:${slot}:s${n}`)));
   }
   for (const r of ['riser1', 'riser2'] as const) {

@@ -1,5 +1,5 @@
 // Builders for the standard "ticket → diagnose → swap → verify → document" loop.
-import { decoysFor, KIND_LABEL, MODELS, partSpec } from './catalog';
+import { decoysFor, displaySlot, KIND_LABEL, MODELS, partSpec } from './catalog';
 import { makeComponent } from './factory';
 import { locationOf, psuGood } from './projectors';
 import { approach, installPlan, powerOnPlan, reassemblyPlan, removalPlan, unplugPlan } from './coach';
@@ -218,7 +218,7 @@ export function repairSteps(c: RepairCtx): Step[] {
   steps.push(
     s({
       id: 'remove',
-      text: `Remove the failed ${label.toLowerCase()} from ${slot}`,
+      text: `Remove the failed ${label.toLowerCase()} from ${displaySlot(dev.model, slot)}`,
       why: 'Every part is held by something: a latch, a clip, screws. Work each one by hand before you pull, and never force a part that resists.',
       hint: 'Click the part (or its clips/screws) in 3D. The inspector lists what still holds it in.',
       coach: (w) => removalPlan(w, id, slot),
@@ -302,7 +302,7 @@ export function repairSteps(c: RepairCtx): Step[] {
           const d = w.devices[id];
           const corded = !!d.powerCords[slot];
           return [
-            L(`Plug ${slot} into a free ${slot === 'PSU1' ? 'PDU-A (blue)' : 'PDU-B (red)'} outlet`, corded, { deviceId: id, rackId: dev.rackId ?? undefined, side: 'rear', sel: `cord:${slot}` }),
+            L(`Plug ${displaySlot(dev.model, slot)} into a free ${slot === 'PSU1' ? 'PDU-A (blue)' : 'PDU-B (red)'} outlet`, corded, { deviceId: id, rackId: dev.rackId ?? undefined, side: 'rear', sel: `cord:${slot}` }),
             L('Snap the wire retention bail over the plug', corded && isTight(d, slot, 'bail'), { deviceId: id, rackId: dev.rackId ?? undefined, side: 'rear', sel: `fastener:${slot}:bail` }),
             L('PSU LED turns solid green', psuGood(w, d, slot), { deviceId: id, rackId: dev.rackId ?? undefined, side: 'rear', sel: slot }),
           ];

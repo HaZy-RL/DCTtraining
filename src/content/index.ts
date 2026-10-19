@@ -10,6 +10,8 @@ import { safetyScenarios } from './safety';
 import { shiftScenarios } from './shift';
 import { ticketingScenarios } from './ticketing';
 import { troubleshootScenarios } from './troubleshoot';
+import { vendorScenarios } from './vendors';
+import type { VendorId } from '../engine/vendors';
 
 export interface ModuleInfo {
   id: ModuleId;
@@ -17,6 +19,8 @@ export interface ModuleInfo {
   blurb: string;
   icon: string;
   color: string;
+  /** Vendor tracks are reached from the vendor buttons, not the zone grid. */
+  vendor?: VendorId;
 }
 
 export const MODULES: ModuleInfo[] = [
@@ -30,6 +34,10 @@ export const MODULES: ModuleInfo[] = [
   { id: 'safety', title: 'Safety & Security', blurb: 'Spot the hazards, ESD, lifting, EPO, tailgating and data-bearing media.', icon: '🦺', color: '#fc8181' },
   { id: 'floor', title: 'Floor Navigation', blurb: 'Location codes, U numbering, hot and cold aisles, finding racks fast.', icon: '🗺️', color: '#90cdf4' },
   { id: 'shift', title: 'Shift Mode', blurb: 'The capstone: a live ticket queue, SLAs, a P1 page and a handoff.', icon: '⏱️', color: '#f6e05e' },
+  { id: 'dell', vendor: 'dell', title: 'Dell PowerEdge', blurb: 'R760 in a colo hall: iDRAC9 and the Lifecycle Log, racadm, Service Tags and PPIDs, BOSS-N1 boot, ProSupport dispatch.', icon: '🟦', color: '#0076ce' },
+  { id: 'hpe', vendor: 'hpe', title: 'HPE ProLiant', blurb: 'DL380 Gen11: iLO 6 and the IML, SMASH CLP, Smart Carriers, Flex Slot PSUs, NS204i-u boot, CSR parts.', icon: '🟩', color: '#01a982' },
+  { id: 'supermicro', vendor: 'supermicro', title: 'Supermicro SuperServer', blurb: 'Hyper and CloudDC 2U: the X13 BMC health log, ipmitool, AIOM networking, descriptive part numbers and eRMA.', icon: '🟦', color: '#3d6fc1' },
+  { id: 'lenovo', vendor: 'lenovo', title: 'Lenovo ThinkSystem', blurb: 'SR650 V3: XClarity Controller 2, FQXSP events, the XCC CLI, TruDDR5, 11S FRU labels and CRU dispatch.', icon: '🟥', color: '#e2231a' },
 ];
 
 export const SCENARIOS: ScenarioDef[] = [
@@ -43,6 +51,7 @@ export const SCENARIOS: ScenarioDef[] = [
   ...safetyScenarios,
   ...floorScenarios,
   ...shiftScenarios,
+  ...vendorScenarios,
 ];
 
 export function scenariosFor(m: ModuleId): ScenarioDef[] {
